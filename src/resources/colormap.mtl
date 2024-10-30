@@ -1,0 +1,11 @@
+# custom Kd = diffuse color, Ka = ambient color
+
+newmtl colormap
+map_Kd color_palette8.png
+illum 1
+Kd 1 1 1
+d 1.000000
+Ns 0.000000
+Ni 1.500000
+
+

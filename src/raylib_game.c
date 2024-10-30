@@ -15,11 +15,15 @@
 #include "raymath.h"
 
 #define PLATFORM_WEB // for IDE quick hack
+#define RAYGUI_IMPLEMENTATION
+#include "raygui.h"                 // Required for GUI controls
 
 #if defined(PLATFORM_WEB)
     #define CUSTOM_MODAL_DIALOGS            // Force custom modal dialogs usage
     #include <emscripten/emscripten.h>      // Emscripten library - LLVM to JavaScript compiler
 #endif
+
+#include "iconset.h"
 
 #include <stdio.h>                          // Required for: printf()
 #include <stdlib.h>                         // Required for: 
@@ -38,8 +42,10 @@
 #endif
 
 //----------------------------------------------------------------------------------------------------------------------
-// Types and Structures Definition
+// Type Definition
 //----------------------------------------------------------------------------------------------------------------------
+// Game State
+//--------------------------------------------------------------------------------------
 typedef enum
 {
     APP_STATE_TITLE,
@@ -51,15 +57,18 @@ typedef enum
 
 typedef enum
 {
-	CAM_PAN_IDLE,
-	CAM_PAN_ACTIVE,
-} CameraPanningState;
-
-typedef enum
-{
 	ACTION_MODE_PANZOOM,
 	ACTION_MODE_BUILD,
 } InteractionMode;
+
+// Camera
+//--------------------------------------------------------------------------------------
+
+typedef enum
+{
+	CAM_PAN_IDLE,
+	CAM_PAN_ACTIVE,
+} CameraPanningState;
 
 typedef struct CameraControlValues
 {
@@ -75,19 +84,67 @@ typedef struct CameraPanState
 
 } CameraPanState;
 
+// Art Assets
+//--------------------------------------------------------------------------------------
+
+typedef enum
+{
+	MODEL_RAILS_STRAIGHT,
+	MODEL_RAILS_CURVE,
+	MODEL_FACTORY_A,
+	MODEL_TRAIN_LOCOMOTIVE_A,
+	MODEL_COUNT
+} ModelID;
+
+const char* modelFilePaths[MODEL_COUNT] =
+{
+	"resources/rails_straight_8.obj",
+	"resources/rails_curve_8.obj",
+	"resources/factory_a_8.obj",
+	"resources/locomotive_a_8.obj",
+};
+
+static int MAX_MODELS_TO_LOAD_COUNT = MODEL_COUNT;
+
+// Map & tiles
+//--------------------------------------------------------------------------------------
+typedef enum
+{
+	TILE_EMPTY,
+	TILE_RAILS_STRAIGHT,
+	TILE_RAILS_CURVE,
+	TILE_RAILS_SPLIT,
+	TILE_RAILS_JOINER,
+	TILE_RAILS_CROSS,
+	TILE_RAILS_HALT_LIGHT,
+	TILE_RAILS_HALT_STATION,
+} TileType;
+
+typedef enum
+{
+	DIRECTION_NORTH,
+	DIRECTION_EAST,
+	DIRECTION_SOUTH,
+	DIRECTION_WEST
+} Direction;
+
+
+
 //----------------------------------------------------------------------------------------------------------------------
 // Functions Declaration
 //----------------------------------------------------------------------------------------------------------------------
-static void LoopTick(void);							// Update and Draw one frame
-static void InitializeGameAppState(void);			// prepare all static / global data before starting running the main loop
+static void LoadAssets(void);
+static void InitializeGameAppState(void);				// prepare all static / global data before starting running the main loop
 static void ResetGameplayState(void);
+static void TickMainLoop(void);							// Update and Draw one frame
 static void TickGameCamera(void);
 static void UpdateCameraFromControlValues(void);
+static void UnloadAssets(void);
 
 //----------------------------------------------------------------------------------------------------------------------
 // Global Variables Definition & Reset Management
 //----------------------------------------------------------------------------------------------------------------------
-static const int g_ScreenWidth = 1000;
+static const int g_ScreenWidth = 1024;
 static const int g_ScreenHeight = 800;
 
 static const float g_CameraZoomMin = 4;
@@ -101,6 +158,8 @@ static struct
 	CameraPanState cameraPanState;
 	Camera3D camera;
 	InteractionMode actionMode;
+	Texture assetTexture;
+	Model assetModels[MODEL_COUNT];
 } g_game;
 
 
@@ -143,13 +202,12 @@ int main(void)
     // Initialization
     //--------------------------------------------------------------------------------------
     InitWindow(g_ScreenWidth, g_ScreenHeight, "raylib gamejam game test");
-    
-    // TODO: Load resources / Initialize variables at this point
 
 	InitializeGameAppState();
+	LoadAssets();
 
 	#if defined(PLATFORM_WEB)
-		emscripten_set_main_loop(LoopTick, 60, 1);
+	emscripten_set_main_loop(TickMainLoop, 0, 1); // 0 FPS to use animation-request hook as recommended by the warning in the console
 	#else
 		SetTargetFPS(60);     // Set our game frames-per-second
 		//--------------------------------------------------------------------------------------
@@ -164,6 +222,7 @@ int main(void)
     // De-Initialization
     //--------------------------------------------------------------------------------------
     // TODO: Unload all loaded resources at this point
+	UnloadAssets();
     CloseWindow();        // Close window and OpenGL context
     //--------------------------------------------------------------------------------------
     return 0;
@@ -172,6 +231,33 @@ int main(void)
 //----------------------------------------------------------------------------------------------------------------------
 // Module functions definition
 //----------------------------------------------------------------------------------------------------------------------
+// Asset / Resource Management
+//--------------------------------------------------------------------------------------
+void LoadAssets(void)
+{
+	TraceLog(LOG_INFO,"===> starting asset loading ....");
+	g_game.assetTexture = LoadTexture("resources/colormap.png");
+	for (int i = 0; i < MAX_MODELS_TO_LOAD_COUNT; i++)
+	{
+		g_game.assetModels[i] = LoadModel(modelFilePaths[i]);
+		//g_game.assetModels[i].materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = g_game.assetTexture; // not needed. Texture coming through the obj material library
+		TraceLog(LOG_INFO,"===> one step");
+	}
+	//GuiLoadStyle("resources/ui_style.rgs"); // disabled b/c: font spacing or kerning not working properly when font is not embedded. With font embedded we get an exception and app doesn't work
+	//LoadFont("resources/Pixel Intv.otf");
+	TraceLog(LOG_INFO,"===> asset loading completed.");
+}
+
+void UnloadAssets(void)
+{
+	for (int i = 0; i < MAX_MODELS_TO_LOAD_COUNT; i++)
+	{
+		UnloadModel(g_game.assetModels[i]);
+	}
+	UnloadTexture(g_game.assetTexture);
+	TraceLog(LOG_INFO,"===> asset unloading completed.");
+}
+
 void inline UpdateCameraFromControlValues(void)
 {
 	// Extract control values for easier access
@@ -299,10 +385,31 @@ static void TickGameCamera(void)
 	}
 }
 
+// Loop Topics
 //--------------------------------------------------------------------------------------
 
+void TickToolbarUI(void)
+{
+	float screenBottomMargin = 20.0f;
+	float inBetweenButtonsPadding = 10.0f;
+	float buttonHeight = 30.0f;
+	float buttonWidth = 140.0f;
+	float buttonCount = 4.0f;
+	float xStartingPos = (float) g_ScreenWidth * .5f - buttonCount * (inBetweenButtonsPadding + buttonWidth) * 0.5f;
+	float yPos = (float) g_ScreenHeight - buttonHeight - screenBottomMargin;
+	Rectangle buttonRect = {xStartingPos, yPos, buttonWidth, buttonHeight };
+
+	GuiToggle(buttonRect, "#21#Select", false);
+	buttonRect.x += buttonWidth + inBetweenButtonsPadding;
+	GuiToggle(buttonRect, "#229#Rails Forward", false);
+	buttonRect.x += buttonWidth + inBetweenButtonsPadding;
+	GuiToggle(buttonRect, "#231#Rails Corner", false);
+	buttonRect.x += buttonWidth + inBetweenButtonsPadding;
+	GuiToggle(buttonRect, "#143#Bulldozer", false);
+}
+
 // Update and draw frame
-void LoopTick(void)
+void TickMainLoop(void)
 {
 	//----------------------------------------------------------------------------------
     // Update
@@ -320,15 +427,22 @@ void LoopTick(void)
 		BeginMode3D(g_game.camera);
 
 			DrawCube(cubePosition, 1.0f, 1.0f, 1.0f, GREEN);
+			for (int i = 0; i < MAX_MODELS_TO_LOAD_COUNT; i++)
+			{
+				DrawModel(g_game.assetModels[i], (Vector3) {1.0f * (float) i, 0.0f,1.0f}, 1.0f, WHITE);
+			}
 
-			DrawGrid(128, 1.0f);
+			DrawGrid(64, 1.0f);
 
 		EndMode3D();
 
         // UI
-		DrawText("Welcome to raylib NEXT gamejam!", 230, 40, 30, WHITE);
-		DrawRectangleLinesEx((Rectangle){0, 0, g_ScreenWidth, g_ScreenHeight }, 16, WHITE);
+		DrawRectangle(0,0, g_ScreenWidth, 20, BLACK); // background
+		DrawText("For raylib NEXT gamejam 2024 Q4", 230, 15, 30, WHITE);
+		DrawRectangleLinesEx((Rectangle){0, 0, g_ScreenWidth, g_ScreenHeight }, 16, LIME);
 
+		TickToolbarUI();
+		DrawFPS(20, 20);
     EndDrawing();
     //----------------------------------------------------------------------------------  
 }

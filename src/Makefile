@@ -30,7 +30,7 @@ PLATFORM              ?= PLATFORM_WEB
 
 # Define project variables
 PROJECT_NAME          ?= index
-PROJECT_VERSION       ?= 0.1
+PROJECT_VERSION       ?= 0.2
 PROJECT_BUILD_PATH    ?= .
 PROJECT_SOURCE_FILES  ?= raylib_game.c
 
@@ -51,7 +51,7 @@ BUILD_MODE            ?= DEBUG
 # PLATFORM_WEB: Default properties
 BUILD_WEB_ASYNCIFY    ?= FALSE
 BUILD_WEB_SHELL       ?= minshell.html
-BUILD_WEB_HEAP_SIZE   ?= 128MB
+BUILD_WEB_HEAP_SIZE   ?= 512MB
 BUILD_WEB_STACK_SIZE  ?= 1MB
 BUILD_WEB_ASYNCIFY_STACK_SIZE ?= 1048576
 BUILD_WEB_RESOURCES   ?= TRUE
