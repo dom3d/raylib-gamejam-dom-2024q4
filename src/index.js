@@ -35,7 +35,7 @@ if (ENVIRONMENT_IS_NODE) {
 
 // --pre-jses are emitted after the Module integration code, so that they can
 // refer to Module (if they choose; they can also define Module)
-// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp9vwq9qxd.js
+// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp0njsoiqk.js
 
   if (!Module['expectedDataFileDownloads']) {
     Module['expectedDataFileDownloads'] = 0;
@@ -219,25 +219,25 @@ Module['FS_createPath']("/", "resources", true, true);
     }
 
     }
-    loadPackage({"files": [{"filename": "/resources/README.txt", "start": 0, "end": 50}], "remote_package_size": 50});
+    loadPackage({"files": [{"filename": "/resources/.DS_Store", "start": 0, "end": 6148}, {"filename": "/resources/Pixel Intv.otf", "start": 6148, "end": 26040}, {"filename": "/resources/color_palette8.png", "start": 26040, "end": 27338}, {"filename": "/resources/colormap.mtl", "start": 27338, "end": 27483}, {"filename": "/resources/factory_a_8.obj", "start": 27483, "end": 122316}, {"filename": "/resources/locomotive_a_8.obj", "start": 122316, "end": 245595}, {"filename": "/resources/rails_curve_8.obj", "start": 245595, "end": 267048}, {"filename": "/resources/rails_straight_8.obj", "start": 267048, "end": 284121}, {"filename": "/resources/ui_style.rgs", "start": 284121, "end": 284265}], "remote_package_size": 284265});
 
   })();
 
-// end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp9vwq9qxd.js
-// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmpv5aj4kf_.js
+// end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp0njsoiqk.js
+// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp_y_s3w7t.js
 
     // All the pre-js content up to here must remain later on, we need to run
     // it.
     if (Module['$ww'] || (typeof ENVIRONMENT_IS_PTHREAD != 'undefined' && ENVIRONMENT_IS_PTHREAD)) Module['preRun'] = [];
     var necessaryPreJSTasks = Module['preRun'].slice();
-  // end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmpv5aj4kf_.js
-// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmpq3dv_4zv.js
+  // end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp_y_s3w7t.js
+// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmpds3r2mm7.js
 
     if (!Module['preRun']) throw 'Module.preRun should exist because file support used it; did a pre-js delete it?';
     necessaryPreJSTasks.forEach((task) => {
       if (Module['preRun'].indexOf(task) < 0) throw 'All preRun tasks that exist before user pre-js code should remain after; did you replace Module or modify Module.preRun?';
     });
-  // end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmpq3dv_4zv.js
+  // end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmpds3r2mm7.js
 
 
 // Sometimes an existing Module object exists with properties
@@ -3926,6 +3926,18 @@ function GetWindowInnerHeight() { return window.innerHeight; }
         return ret;
       },
   };
+  function ___syscall_chdir(path) {
+  try {
+  
+      path = SYSCALLS.getStr(path);
+      FS.chdir(path);
+      return 0;
+    } catch (e) {
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    return -e.errno;
+  }
+  }
+
   function ___syscall_faccessat(dirfd, path, amode, flags) {
   try {
   
@@ -7848,6 +7860,18 @@ function GetWindowInnerHeight() { return window.innerHeight; }
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   
   
   
@@ -9174,6 +9198,8 @@ var wasmImports = {
   /** @export */
   __assert_fail: ___assert_fail,
   /** @export */
+  __syscall_chdir: ___syscall_chdir,
+  /** @export */
   __syscall_faccessat: ___syscall_faccessat,
   /** @export */
   __syscall_fcntl64: ___syscall_fcntl64,
@@ -9656,13 +9682,37 @@ var wasmImports = {
   /** @export */
   glTexParameteri: _glTexParameteri,
   /** @export */
+  glUniform1fv: _glUniform1fv,
+  /** @export */
   glUniform1i: _glUniform1i,
   /** @export */
+  glUniform1iv: _glUniform1iv,
+  /** @export */
+  glUniform2fv: _glUniform2fv,
+  /** @export */
+  glUniform2iv: _glUniform2iv,
+  /** @export */
+  glUniform3fv: _glUniform3fv,
+  /** @export */
+  glUniform3iv: _glUniform3iv,
+  /** @export */
   glUniform4f: _glUniform4f,
+  /** @export */
+  glUniform4fv: _glUniform4fv,
+  /** @export */
+  glUniform4iv: _glUniform4iv,
   /** @export */
   glUniformMatrix4fv: _glUniformMatrix4fv,
   /** @export */
   glUseProgram: _glUseProgram,
+  /** @export */
+  glVertexAttrib1fv: _glVertexAttrib1fv,
+  /** @export */
+  glVertexAttrib2fv: _glVertexAttrib2fv,
+  /** @export */
+  glVertexAttrib3fv: _glVertexAttrib3fv,
+  /** @export */
+  glVertexAttrib4fv: _glVertexAttrib4fv,
   /** @export */
   glVertexAttribPointer: _glVertexAttribPointer,
   /** @export */
@@ -9716,9 +9766,9 @@ var wasmImports = {
 };
 var wasmExports = createWasm();
 var ___wasm_call_ctors = createExportWrapper('__wasm_call_ctors', 0);
-var _main = Module['_main'] = createExportWrapper('main', 2);
-var _malloc = createExportWrapper('malloc', 1);
 var _free = createExportWrapper('free', 1);
+var _malloc = createExportWrapper('malloc', 1);
+var _main = Module['_main'] = createExportWrapper('main', 2);
 var _fflush = createExportWrapper('fflush', 1);
 var _strerror = createExportWrapper('strerror', 1);
 var _emscripten_stack_init = () => (_emscripten_stack_init = wasmExports['emscripten_stack_init'])();

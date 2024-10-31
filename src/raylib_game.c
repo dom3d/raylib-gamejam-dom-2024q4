@@ -13,6 +13,7 @@
 
 #include "raylib.h"
 #include "raymath.h"
+#include "rlgl.h"
 
 #define PLATFORM_WEB // for IDE quick hack
 #define RAYGUI_IMPLEMENTATION
@@ -42,6 +43,29 @@
 #endif
 
 //----------------------------------------------------------------------------------------------------------------------
+// Global constants
+//----------------------------------------------------------------------------------------------------------------------
+// My color palette
+#define COLOR_BLACK	CLITERAL(Color){ 0, 0, 0, 255 }
+#define COLOR_GREY	CLITERAL(Color){ 160, 157, 161, 255 }
+#define COLOR_WHITE	CLITERAL(Color){ 255, 255, 255, 255 }
+#define COLOR_BROWN	CLITERAL(Color){ 148, 82, 0, 255 }
+#define COLOR_RED	CLITERAL(Color){ 224, 17, 0, 255 }
+#define COLOR_BLUE	CLITERAL(Color){ 59, 133, 220, 255 }
+#define COLOR_GREEN	CLITERAL(Color){ 96, 139, 50, 255 }
+#define COLOR_YELLOW	CLITERAL(Color){ 255, 198, 83, 255 }
+
+static const int g_ScreenWidth = 1024;
+static const int g_ScreenHeight = 800;
+
+static const float g_CameraZoomMin = 4;
+static const float g_CameraZoomMax = 30;
+static const float g_CameraZoomSpeedFactor = 0.10f;
+
+static const int g_GridSize = 64;
+static const int g_TileCount = g_GridSize * g_GridSize;
+
+//----------------------------------------------------------------------------------------------------------------------
 // Type Definition
 //----------------------------------------------------------------------------------------------------------------------
 // Game State
@@ -57,13 +81,29 @@ typedef enum
 
 typedef enum
 {
-	ACTION_MODE_PANZOOM,
-	ACTION_MODE_BUILD,
+	ACTION_MODE_INSPECT,
+	ACTION_MODE_BUILD_RAILS,
+	ACTION_MODE_BUILD_RESOURCER,
+	ACTION_MODE_BUILD_PROCESSOR,
+	ACTION_MODE_BUILD_CITY,
+	ACTION_MODE_BUILD_BULLDOZER,
+	ACTION_MODE_COUNT,
 } InteractionMode;
+
+const int g_interactionModeKeyboardShortcuts[ACTION_MODE_COUNT] = { KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B, KEY_N };
+
+const char* g_actionModeButtonLabels[ACTION_MODE_COUNT] =
+{
+		"#21#Inspect",
+		"#171#Rails",
+		"#210#Resourcing",
+		"#209#Processor",
+		"#185#City",
+		"#143#Bulldozer"
+};
 
 // Camera
 //--------------------------------------------------------------------------------------
-
 typedef enum
 {
 	CAM_PAN_IDLE,
@@ -86,7 +126,6 @@ typedef struct CameraPanState
 
 // Art Assets
 //--------------------------------------------------------------------------------------
-
 typedef enum
 {
 	MODEL_RAILS_STRAIGHT,
@@ -96,7 +135,7 @@ typedef enum
 	MODEL_COUNT
 } ModelID;
 
-const char* modelFilePaths[MODEL_COUNT] =
+const char* g_modelFilePaths[MODEL_COUNT] =
 {
 	"resources/rails_straight_8.obj",
 	"resources/rails_curve_8.obj",
@@ -122,35 +161,29 @@ typedef enum
 
 typedef enum
 {
-	DIRECTION_NORTH,
-	DIRECTION_EAST,
-	DIRECTION_SOUTH,
-	DIRECTION_WEST
-} Direction;
+	DIRECTION_NORTH = 1 << 0,
+	DIRECTION_EAST  = 1 << 1,
+	DIRECTION_SOUTH = 1 << 2,
+	DIRECTION_WEST  = 1 << 3
+} DirectionFlag;
 
+typedef uint8_t DirectionsInfo;
 
+typedef struct TileInfo
+{
+	TileType type;
+	DirectionsInfo connectionOptions; // Bitflags for connectionOptions (NORTH, EAST, SOUTH, WEST)
+	// todo vehicle IDs and transition progress info etc
+} TileInfo;
 
-//----------------------------------------------------------------------------------------------------------------------
-// Functions Declaration
-//----------------------------------------------------------------------------------------------------------------------
-static void LoadAssets(void);
-static void InitializeGameAppState(void);				// prepare all static / global data before starting running the main loop
-static void ResetGameplayState(void);
-static void TickMainLoop(void);							// Update and Draw one frame
-static void TickGameCamera(void);
-static void UpdateCameraFromControlValues(void);
-static void UnloadAssets(void);
+typedef struct
+{
+	int x;
+	int z;
+} TileCoords;
 
-//----------------------------------------------------------------------------------------------------------------------
-// Global Variables Definition & Reset Management
-//----------------------------------------------------------------------------------------------------------------------
-static const int g_ScreenWidth = 1024;
-static const int g_ScreenHeight = 800;
-
-static const float g_CameraZoomMin = 4;
-static const float g_CameraZoomMax = 30;
-static const float g_CameraZoomSpeedFactor = 0.10f;
-
+// Game App State
+//--------------------------------------------------------------------------------------
 static struct
 {
 	AppState state;
@@ -160,22 +193,37 @@ static struct
 	InteractionMode actionMode;
 	Texture assetTexture;
 	Model assetModels[MODEL_COUNT];
+	TileInfo mapTiles[g_TileCount];
 } g_game;
 
+//----------------------------------------------------------------------------------------------------------------------
+// Functions Declaration
+//----------------------------------------------------------------------------------------------------------------------
+static void AssetsLoad(void);
+static void GameAppInitializeState(void);				// prepare all static / global data before starting running the main loop
+static void GameplayResetState(void);
+static void TickMainLoop(void);							// Update and Draw one frame
+static void CameraTick(void);
+static void CameraUpdateFromControlValues(void);
+static void AssetsUnload(void);
 
+//----------------------------------------------------------------------------------------------------------------------
+// App Reset management
+//----------------------------------------------------------------------------------------------------------------------
 // set the initial conditions and resets the game state
-void InitializeGameAppState(void)
+void GameAppInitializeState(void)
 {
 	g_game.state = APP_STATE_TITLE;
-	ResetGameplayState();
+	GameplayResetState();
 }
 
 // resets gameplay params
-void ResetGameplayState(void)
+void GameplayResetState(void)
 {
+	float halfGridSize = (float) g_GridSize * 0.5f;
 	g_game.cameraControlValues = (CameraControlValues)
 	{
-		.pivot = Vector3Zero(),
+		.pivot = (Vector3) {halfGridSize, 0, halfGridSize },
 		.zoomDistance = 10,
 		.rotation = 0,
 	};
@@ -183,11 +231,17 @@ void ResetGameplayState(void)
 	g_game.cameraPanState = (CameraPanState)
 	{
 		.panningState = CAM_PAN_IDLE,
-		.panStartWorldPosition= Vector3Zero()
+		.panStartWorldPosition = Vector3Zero()
 	};
 
-	UpdateCameraFromControlValues();
-	g_game.actionMode = ACTION_MODE_PANZOOM;
+	CameraUpdateFromControlValues();
+	g_game.actionMode = ACTION_MODE_INSPECT;
+
+	for (int tileIndex = 0; tileIndex < g_GridSize * g_GridSize; tileIndex++)
+	{
+		g_game.mapTiles[tileIndex].type = TILE_EMPTY;
+		g_game.mapTiles[tileIndex].connectionOptions = 0; // none
+	}
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -199,12 +253,14 @@ int main(void)
 		SetTraceLogLevel(LOG_NONE);         // Disable raylib trace log messages
 	#endif
 
+	SetConfigFlags(FLAG_MSAA_4X_HINT);
+
     // Initialization
     //--------------------------------------------------------------------------------------
     InitWindow(g_ScreenWidth, g_ScreenHeight, "raylib gamejam game test");
 
-	InitializeGameAppState();
-	LoadAssets();
+	GameAppInitializeState();
+	AssetsLoad();
 
 	#if defined(PLATFORM_WEB)
 	emscripten_set_main_loop(TickMainLoop, 0, 1); // 0 FPS to use animation-request hook as recommended by the warning in the console
@@ -222,24 +278,22 @@ int main(void)
     // De-Initialization
     //--------------------------------------------------------------------------------------
     // TODO: Unload all loaded resources at this point
-	UnloadAssets();
+	AssetsUnload();
     CloseWindow();        // Close window and OpenGL context
     //--------------------------------------------------------------------------------------
     return 0;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
-// Module functions definition
-//----------------------------------------------------------------------------------------------------------------------
 // Asset / Resource Management
-//--------------------------------------------------------------------------------------
-void LoadAssets(void)
+//----------------------------------------------------------------------------------------------------------------------
+void AssetsLoad(void)
 {
 	TraceLog(LOG_INFO,"===> starting asset loading ....");
 	g_game.assetTexture = LoadTexture("resources/colormap.png");
 	for (int i = 0; i < MAX_MODELS_TO_LOAD_COUNT; i++)
 	{
-		g_game.assetModels[i] = LoadModel(modelFilePaths[i]);
+		g_game.assetModels[i] = LoadModel(g_modelFilePaths[i]);
 		//g_game.assetModels[i].materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = g_game.assetTexture; // not needed. Texture coming through the obj material library
 		TraceLog(LOG_INFO,"===> one step");
 	}
@@ -248,7 +302,7 @@ void LoadAssets(void)
 	TraceLog(LOG_INFO,"===> asset loading completed.");
 }
 
-void UnloadAssets(void)
+void AssetsUnload(void)
 {
 	for (int i = 0; i < MAX_MODELS_TO_LOAD_COUNT; i++)
 	{
@@ -258,12 +312,16 @@ void UnloadAssets(void)
 	TraceLog(LOG_INFO,"===> asset unloading completed.");
 }
 
-void inline UpdateCameraFromControlValues(void)
+//----------------------------------------------------------------------------------------------------------------------
+// Camera topics
+//----------------------------------------------------------------------------------------------------------------------
+void inline CameraUpdateFromControlValues(void)
 {
 	// Extract control values for easier access
 	Vector3 pivot = g_game.cameraControlValues.pivot;
 	float zoomDistance = g_game.cameraControlValues.zoomDistance;
 	float rotation = g_game.cameraControlValues.rotation;
+	rotation += PI; // equivalent to 180 degrees
 
 	// Calculate the new camera position based on rotation around the pivot
 	float cameraX = pivot.x + zoomDistance * cosf(rotation);
@@ -280,7 +338,7 @@ void inline UpdateCameraFromControlValues(void)
 	};
 }
 
-static void TickGameCamera(void)
+static void CameraTick(void)
 {
 	bool cameraNeedsUpdating = false;
 
@@ -381,31 +439,134 @@ static void TickGameCamera(void)
 	//----------------------------------------------------------------------------------
 	if(cameraNeedsUpdating)
 	{
-		UpdateCameraFromControlValues();
+		CameraUpdateFromControlValues();
 	}
 }
 
+//----------------------------------------------------------------------------------------------------------------------
+// Map topics
+//----------------------------------------------------------------------------------------------------------------------
+
+static inline int MapTileIndexByCoords(int x, int y)
+{
+	return y * g_GridSize + x;
+}
+
+static inline TileCoords MapTileCoordsByIndex(int arrayIndex)
+{
+	TileCoords coords;
+
+	coords.z = arrayIndex / g_GridSize;
+	coords.x = arrayIndex % g_GridSize;
+
+	return coords;
+}
+
+static inline void MapDirectionSetFlag(DirectionsInfo* flags, DirectionFlag flag)
+{
+	*flags |= flag;
+}
+
+static inline void MapDirectionClearFlag(DirectionsInfo* flags, DirectionFlag flag)
+{
+	*flags &= ~flag;
+}
+static inline int MapDirectionIsFlagSet(DirectionsInfo flags, DirectionFlag flag)
+{
+	return flags & flag;
+}
+
+static inline void MapDirectionSetAll(DirectionsInfo* flags, bool north, bool east, bool south, bool west)
+{
+	*flags = 0; // Clear all flags initially
+	if (north) *flags |= DIRECTION_NORTH;
+	if (south) *flags |= DIRECTION_SOUTH;
+	if (east) *flags |= DIRECTION_EAST;
+	if (west) *flags |= DIRECTION_WEST;
+}
+
+static inline void MapTileSetData(int x, int y, TileType type, bool north, bool east, bool south, bool west)
+{
+	int index = MapTileIndexByCoords(x, y);
+	g_game.mapTiles[index].type = type;
+	MapDirectionSetAll(&(g_game.mapTiles[index].connectionOptions), north, east, south, west);
+}
+
+// Get the grid tile  coordinates
+static inline TileCoords TileGetCoordsFromWorldPoint(Vector3 position)
+{
+	TileCoords tileCoords;
+
+	tileCoords.x = (int) position.x;
+	tileCoords.z = (int) position.z;
+
+	// Ensure the indices are within the bounds of the grid
+	tileCoords.x = (tileCoords.x < 0) ? 0 : (tileCoords.x >= g_GridSize) ? g_GridSize - 1 : tileCoords.x;
+	tileCoords.z = (tileCoords.z < 0) ? 0 : (tileCoords.z >= g_GridSize) ? g_GridSize - 1 : tileCoords.z;
+
+	return tileCoords;
+}
+
+// Calculate the center position of the grid tile
+static inline Vector3 TileGetCenterPosition(TileCoords tileCoords)
+{
+	Vector3 worldPosition;
+	worldPosition.x = (float) tileCoords.x + 0.5f;
+	worldPosition.z = (float) tileCoords.z + 0.5f;
+	worldPosition.y = 0.01f;
+	return worldPosition;
+}
+
+void DrawGridAt(int slices, float spacing, float x, float y, float z, Color mainColor, Color axisColor)
+{
+	int halfSlices = slices/2;
+	rlBegin(RL_LINES);
+	for (int i = -halfSlices; i <= halfSlices; i++)
+	{
+		if (i == 0)
+		{
+			rlColor4ub(axisColor.r, axisColor.g, axisColor.b, axisColor.a);
+		}
+		else
+		{
+			rlColor4ub(mainColor.r, mainColor.g, mainColor.b, mainColor.a);
+		}
+
+		rlVertex3f((float)i*spacing + x, y, (float)-halfSlices*spacing + z);
+		rlVertex3f((float)i*spacing + x, y, (float)halfSlices*spacing + z);
+
+		rlVertex3f((float)-halfSlices*spacing + x, y, (float)i*spacing + z);
+		rlVertex3f((float)halfSlices*spacing + x, y, (float)i*spacing + z);
+	}
+	rlEnd();
+}
+
+//----------------------------------------------------------------------------------------------------------------------
 // Loop Topics
-//--------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------
 
 void TickToolbarUI(void)
 {
 	float screenBottomMargin = 20.0f;
 	float inBetweenButtonsPadding = 10.0f;
 	float buttonHeight = 30.0f;
-	float buttonWidth = 140.0f;
-	float buttonCount = 4.0f;
+	float buttonWidth = 100.0f;
+	float buttonCount = 5.0f;
 	float xStartingPos = (float) g_ScreenWidth * .5f - buttonCount * (inBetweenButtonsPadding + buttonWidth) * 0.5f;
 	float yPos = (float) g_ScreenHeight - buttonHeight - screenBottomMargin;
 	Rectangle buttonRect = {xStartingPos, yPos, buttonWidth, buttonHeight };
 
-	GuiToggle(buttonRect, "#21#Select", false);
-	buttonRect.x += buttonWidth + inBetweenButtonsPadding;
-	GuiToggle(buttonRect, "#229#Rails Forward", false);
-	buttonRect.x += buttonWidth + inBetweenButtonsPadding;
-	GuiToggle(buttonRect, "#231#Rails Corner", false);
-	buttonRect.x += buttonWidth + inBetweenButtonsPadding;
-	GuiToggle(buttonRect, "#143#Bulldozer", false);
+	for(int actionModeId = 0; actionModeId < ACTION_MODE_COUNT; ++actionModeId)
+	{
+		bool toggleButtonActive = g_game.actionMode == actionModeId;
+		GuiToggle(buttonRect, g_actionModeButtonLabels[actionModeId], &toggleButtonActive);
+		if(toggleButtonActive || IsKeyPressed(g_interactionModeKeyboardShortcuts[actionModeId]))
+		{
+			g_game.actionMode = actionModeId;
+		}
+
+		buttonRect.x += buttonWidth + inBetweenButtonsPadding;
+	}
 }
 
 // Update and draw frame
@@ -414,32 +575,81 @@ void TickMainLoop(void)
 	//----------------------------------------------------------------------------------
     // Update
 	//----------------------------------------------------------------------------------
-	TickGameCamera();
+	CameraTick();
 
 	//----------------------------------------------------------------------------------
     // Draw
     //----------------------------------------------------------------------------------
-	Vector3 cubePosition = { 0.0f, 1.0f, 0.0f };
 
 	BeginDrawing();
 		ClearBackground(BLACK);
 		// Render 3D scene
 		BeginMode3D(g_game.camera);
 
-			DrawCube(cubePosition, 1.0f, 1.0f, 1.0f, GREEN);
-			for (int i = 0; i < MAX_MODELS_TO_LOAD_COUNT; i++)
+			float width = (float) g_GridSize;
+			float center = width * 0.5f;
+			DrawPlane((Vector3){ center, 0.0f, center }, (Vector2){ width, width }, COLOR_GREEN); // ground plane
+			DrawGridAt(g_GridSize, 1.0f, center, 0.01f, center, COLOR_BLACK, COLOR_RED);
+
+			// debug markers
+			DrawSphere((Vector3){ 0.0f, 0.0f, 0.0f }, 0.1f, COLOR_RED); // map origin
+			DrawSphere((Vector3){width, 0, width}, 0.1f, COLOR_YELLOW); // map far end
+//			for (int i = 0; i < MAX_MODELS_TO_LOAD_COUNT; i++)
+//			{
+//				DrawModel(g_game.assetModels[i], (Vector3) {1.0f * (float) i, 0.0f,1.0f}, 1.0f, WHITE);
+//			}
+
+
+			// remove this from drawing ----------------------------------------------------------------------------------
+			// what's the point coordinate on the world plane?
+			Ray mouseRay = GetMouseRay(GetMousePosition(), g_game.camera);
+			float cornerValue = (float) +g_GridSize;
+			RayCollision rayCollision = GetRayCollisionQuad
+			(
+					mouseRay,
+					(Vector3) {0, 0, 0},
+					(Vector3) {cornerValue, 0, 0},
+					(Vector3) {cornerValue, 0, cornerValue},
+					(Vector3) {0, 0, cornerValue}
+			);
+
+			if(rayCollision.hit)
 			{
-				DrawModel(g_game.assetModels[i], (Vector3) {1.0f * (float) i, 0.0f,1.0f}, 1.0f, WHITE);
+				TileCoords tileCoords = TileGetCoordsFromWorldPoint(rayCollision.point);
+				Vector3 tileCenterPoint = TileGetCenterPosition(tileCoords);
+
+				// draw grid cursor
+				if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) == false && IsKeyDown(KEY_SPACE) == false && g_game.cameraPanState.panningState == CAM_PAN_IDLE)
+				{
+					//DrawCube(rayCollision.point, 1, 0.2f, 1, COLOR_YELLOW);
+					DrawCube(tileCenterPoint, 1, 0.2f, 1, COLOR_BLUE);
+				}
+				else if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) )
+				{
+					MapTileSetData(tileCoords.x, tileCoords.z, TILE_RAILS_STRAIGHT, true, false, true, false);
+				}
 			}
 
-			DrawGrid(64, 1.0f);
+			for(int tileIndex = 0; tileIndex < g_TileCount; ++tileIndex)
+			{
+				if(g_game.mapTiles[tileIndex].type == TILE_RAILS_STRAIGHT)
+				{
+					TileCoords tileCoords = MapTileCoordsByIndex(tileIndex);
+					Vector3 tileCenter = TileGetCenterPosition(tileCoords);
+					DrawModel(g_game.assetModels[MODEL_RAILS_STRAIGHT], tileCenter, 1.0f, WHITE);
+				}
+			}
+
+
+			//GetTileCoords
 
 		EndMode3D();
 
         // UI
-		DrawRectangle(0,0, g_ScreenWidth, 20, BLACK); // background
-		DrawText("For raylib NEXT gamejam 2024 Q4", 230, 15, 30, WHITE);
-		DrawRectangleLinesEx((Rectangle){0, 0, g_ScreenWidth, g_ScreenHeight }, 16, LIME);
+		int frameThickness = 16;
+		DrawRectangle(0,frameThickness, g_ScreenWidth, 30, BLACK); // background
+		DrawText("For raylib 2024Q4 NEXT gamejam `Connections`", 200, 15, 30, WHITE);
+		DrawRectangleLinesEx((Rectangle){0, 0, (float) g_ScreenWidth, (float) g_ScreenHeight }, (float) frameThickness, COLOR_GREY);
 
 		TickToolbarUI();
 		DrawFPS(20, 20);
