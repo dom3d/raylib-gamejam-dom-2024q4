@@ -8,8 +8,8 @@ This template provides a base structure to start developing a small raylib game 
 
 Please, considering the following usual gamejam restrictions: 
 
- - Game must be made with raylib
- - Game must be compiled for web
+ - g_game must be made with raylib
+ - g_game must be compiled for web
  - _Specific gamejam restrictions if defined_
  
 NOTE: Several GitHub Actions workflows have been preconfigured to automatically build your game for Windows, Linux and WebAssembly on each commit. Those workflows automatically sync with latest version of raylib available to build.
@@ -40,47 +40,43 @@ _Copyright (c) 2022-2024 Ramon Santamaria ([@raysan5](https://twitter.com/raysan
 
 -----------------------------------
 
-## $(Game Title)
+## Rayl-Connections (pre-alpha, no gameplay)
 
-![$(Game Title)](screenshots/screenshot000.png "$(Game Title)")
+![$(Rayl-Connections)](screenshots/rayl_connections.jpg "(Rayl-Connections)")
 
 ### Description
 
-$(Your Project Description)
+Build tracks and have a little train drive through it.
+I didn't to create the gameplay part it in time. The submitted version has no gameplay.
+Idea was to have the train pickup resources and drop resources.
 
 ### Features
-
- - $(Project Feature 01)
- - $(Project Feature 02)
- - $(Project Feature 03)
+ - Pan, Zoom, Rotate Camera with Mouse
+ - Draw rail tracks: straights, curves, mergers and crossings
+ - Destroy a track tile (buggy)
 
 ### Controls
-
 Keyboard/Mouse:
- - $(Project Controls 01)
- - $(Project Controls 02)
- - $(Project Controls 03)
+ - Pan View with Mouse Right-Click (RMB) or W A S D keys
+ - Zoom View with Mouse Wheel or RF keys
+ - Rotate View with ALt/Option + Mouse Right-Click (RMB) or Q E keys
+ - Use the button toolbar with Mouse Left-Click or Z X C V keys
+ - TAB to toggle the Debug view 
 
 ### Screenshots
 
-_TODO: Show your game to the world, animated GIFs recommended!._
+- 
 
 ### Developers
 
- - $(Developer 01) - $(Role/Tasks Developed)
- - $(Developer 02) - $(Role/Tasks Developed)
- - $(Developer 03) - $(Role/Tasks Developed)
-
+ - Dominique Boutin
+ - Assets taken from Kenny Assets Train Kit
+ 
 ### Links
 
- - YouTube Gameplay: $(YouTube Link)
- - itch.io Release: $(itch.io Game Page)
- - Steam Release: $(Steam Game Page)
+-
 
 ### License
 
 This project sources are licensed under an unmodified zlib/libpng license, which is an OSI-certified, BSD-like license that allows static linking with closed source software. Check [LICENSE](LICENSE) for further details.
-
-$(Additional Licenses)
-
-*Copyright (c) $(Year) $(User Name) ($(User Twitter/GitHub Name))*
+*Copyright (c) 2024 Dominique Boutin (aka Dom3D on some platforms)

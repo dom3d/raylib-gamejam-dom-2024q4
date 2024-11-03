@@ -1,0 +1,6 @@
+# custom Kd = diffuse color, Ka = ambient color
+
+newmtl colormap
+Kd 1 1 1
+Ka 1 1 1
+map_Kd color_palette8.png

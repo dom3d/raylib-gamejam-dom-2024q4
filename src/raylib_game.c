@@ -1,13 +1,11 @@
 /*******************************************************************************************
 *
-*   raylib gamejam template
+*   Entry for Raylib gamejam 2024 (connections)
 *
-*   Template originally created with raylib 4.5-dev, last time updated with raylib 5.0
-*
-*   Template licensed under an unmodified zlib/libpng license, which is an OSI-certified,
+*   Based on Raylib Template licensed under an unmodified zlib/libpng license, which is an OSI-certified,
 *   BSD-like license that allows static linking with closed source software
 *
-*   Copyright (c) 2022-2024 Ramon Santamaria (@raysan5)
+*   Copyright (c) 2024 Dominique Boutin
 *
 ********************************************************************************************/
 
@@ -68,7 +66,7 @@ static const int g_TileCount = g_MapGridSize * g_MapGridSize;
 static const int g_MaxTrains = 64;
 
 static const KeyboardKey g_debugWindowKey = KEY_TAB;
-static bool g_debugWindowOn = true; // todo turn off
+static bool g_debugWindowOn = false; // todo turn off
 static bool g_debugSimPauseOn = false;
 
 
@@ -536,7 +534,23 @@ static void TickCamera(void)
 
 	//----------------------------------------------------------------------------------
 	// Camera Panning
-	if(IsMouseButtonDown(MOUSE_BUTTON_RIGHT) && IsKeyDown(KEY_LEFT_ALT) == false)
+	bool doPan = false;
+	if(g_game.actionMode == ACTION_MODE_PAN_VIEW)
+	{
+		if
+		(
+			(IsMouseButtonDown(MOUSE_BUTTON_LEFT) && IsKeyDown(KEY_LEFT_ALT) == false) ||
+			(IsMouseButtonDown(MOUSE_BUTTON_RIGHT) && IsKeyDown(KEY_LEFT_ALT) == false)
+		)
+		{
+			doPan = true;
+		}
+	}
+	else if(IsMouseButtonDown(MOUSE_BUTTON_RIGHT) && IsKeyDown(KEY_LEFT_ALT) == false)
+	{
+		doPan = true;
+	}
+	if(doPan)
 	{
 		// what's the point coordinate on the world plane?
 		Ray mouseRay = GetMouseRay(GetMousePosition(), g_game.camera);
@@ -573,10 +587,10 @@ static void TickCamera(void)
 	}
 
 	Vector3 movement = { 0 };
-	if (IsKeyDown(KEY_W)) movement = Vector3Add(movement, (Vector3){ -0.1f, 0, 0 });
-	if (IsKeyDown(KEY_S)) movement = Vector3Add(movement, (Vector3){ 0.1f, 0, 0 });
-	if (IsKeyDown(KEY_A)) movement = Vector3Add(movement, (Vector3){ 0, 0, 0.1f });
-	if (IsKeyDown(KEY_D)) movement = Vector3Add(movement, (Vector3){ 0, 0, -0.1f });
+	if (IsKeyDown(KEY_W)) movement = Vector3Add(movement, (Vector3){ 0, 0, 0.1f });
+	if (IsKeyDown(KEY_S)) movement = Vector3Add(movement, (Vector3){ 0, 0, -0.1f });
+	if (IsKeyDown(KEY_A)) movement = Vector3Add(movement, (Vector3){ 0.1f, 0, 0 });
+	if (IsKeyDown(KEY_D)) movement = Vector3Add(movement, (Vector3){ -0.1f, 0, 0 });
 	if (!Vector3Equals(movement, Vector3Zero()))
 	{
 		g_game.cameraControlValues.pivot = Vector3Add(g_game.cameraControlValues.pivot, movement);
@@ -1335,11 +1349,8 @@ void RenderDebugWindow()
 		rect.y += lineHeight;
 		sprintf(textBuffer, "Train Rotation: %f", train.modelRotationInDegree);
 		GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
-
-
 	}
 }
-
 
 Vector3 Bezier3D(Vector3 start, Vector3 middle, Vector3 end, float t)
 {
@@ -1413,7 +1424,6 @@ void TickToolbarUI(void)
 		buttonRect.x += buttonWidth + inBetweenButtonsPadding;
 	}
 }
-
 
 static void TickTrains(void)
 {
@@ -1686,7 +1696,7 @@ void TickMainLoop(void)
         // UI
 		int frameThickness = 16;
 		DrawRectangle(0,frameThickness, g_ScreenWidth, 30, BLACK); // background
-		DrawText("For raylib 2024Q4 NEXT gamejam `Connections`", 200, 15, 30, WHITE);
+		DrawText("Rayl Connections (pre-alpha)", 200, 15, 30, WHITE);
 		DrawRectangleLinesEx((Rectangle){0, 0, (float) g_ScreenWidth, (float) g_ScreenHeight }, (float) frameThickness, COLOR_GREY);
 
 		TickToolbarUI();
