@@ -35,7 +35,7 @@ if (ENVIRONMENT_IS_NODE) {
 
 // --pre-jses are emitted after the Module integration code, so that they can
 // refer to Module (if they choose; they can also define Module)
-// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp0njsoiqk.js
+// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmptb0iljnt.js
 
   if (!Module['expectedDataFileDownloads']) {
     Module['expectedDataFileDownloads'] = 0;
@@ -219,25 +219,25 @@ Module['FS_createPath']("/", "resources", true, true);
     }
 
     }
-    loadPackage({"files": [{"filename": "/resources/.DS_Store", "start": 0, "end": 6148}, {"filename": "/resources/Pixel Intv.otf", "start": 6148, "end": 26040}, {"filename": "/resources/color_palette8.png", "start": 26040, "end": 27338}, {"filename": "/resources/colormap.mtl", "start": 27338, "end": 27483}, {"filename": "/resources/factory_a_8.obj", "start": 27483, "end": 122316}, {"filename": "/resources/locomotive_a_8.obj", "start": 122316, "end": 245595}, {"filename": "/resources/rails_curve_8.obj", "start": 245595, "end": 267048}, {"filename": "/resources/rails_straight_8.obj", "start": 267048, "end": 284121}, {"filename": "/resources/ui_style.rgs", "start": 284121, "end": 284265}], "remote_package_size": 284265});
+    loadPackage({"files": [{"filename": "/resources/.DS_Store", "start": 0, "end": 6148}, {"filename": "/resources/Pixel Intv.otf", "start": 6148, "end": 26040}, {"filename": "/resources/color_palette8.png", "start": 26040, "end": 27338}, {"filename": "/resources/colormap.mtl", "start": 27338, "end": 27483}, {"filename": "/resources/factory_a_8.obj", "start": 27483, "end": 122316}, {"filename": "/resources/locomotive_a_8.obj", "start": 122316, "end": 245595}, {"filename": "/resources/rails_crossing_8.obj", "start": 245595, "end": 281728}, {"filename": "/resources/rails_curve_8.obj", "start": 281728, "end": 303181}, {"filename": "/resources/rails_merge_8.obj", "start": 303181, "end": 344818}, {"filename": "/resources/rails_merge_mirror_8.obj", "start": 344818, "end": 386317}, {"filename": "/resources/rails_straight_8.obj", "start": 386317, "end": 403390}, {"filename": "/resources/ui_style.rgs", "start": 403390, "end": 403534}], "remote_package_size": 403534});
 
   })();
 
-// end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp0njsoiqk.js
-// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp_y_s3w7t.js
+// end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmptb0iljnt.js
+// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp1rl1w0st.js
 
     // All the pre-js content up to here must remain later on, we need to run
     // it.
     if (Module['$ww'] || (typeof ENVIRONMENT_IS_PTHREAD != 'undefined' && ENVIRONMENT_IS_PTHREAD)) Module['preRun'] = [];
     var necessaryPreJSTasks = Module['preRun'].slice();
-  // end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp_y_s3w7t.js
-// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmpds3r2mm7.js
+  // end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp1rl1w0st.js
+// include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp0ciuo0wj.js
 
     if (!Module['preRun']) throw 'Module.preRun should exist because file support used it; did a pre-js delete it?';
     necessaryPreJSTasks.forEach((task) => {
       if (Module['preRun'].indexOf(task) < 0) throw 'All preRun tasks that exist before user pre-js code should remain after; did you replace Module or modify Module.preRun?';
     });
-  // end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmpds3r2mm7.js
+  // end include: /var/folders/fp/j0vg1g8x0qg459bnb5zfznn00000gp/T/tmp0ciuo0wj.js
 
 
 // Sometimes an existing Module object exists with properties

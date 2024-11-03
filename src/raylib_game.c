@@ -62,15 +62,19 @@ static const float g_CameraZoomMin = 4;
 static const float g_CameraZoomMax = 30;
 static const float g_CameraZoomSpeedFactor = 0.10f;
 
-static const int g_GridSize = 64;
-static const int g_TileCount = g_GridSize * g_GridSize;
+static const int g_MapGridSize = 64;
+static const int g_TileCount = g_MapGridSize * g_MapGridSize;
+
+static const KeyboardKey g_debugWindowKey = KEY_TAB;
+static bool g_debugWindowOn = false;
+
 
 //----------------------------------------------------------------------------------------------------------------------
 // Type Definition
 //----------------------------------------------------------------------------------------------------------------------
 // Game State
 //--------------------------------------------------------------------------------------
-typedef enum
+typedef enum : uint8_t // c99
 {
     APP_STATE_TITLE,
 	APP_STATE_MAIN_MENU,
@@ -79,7 +83,7 @@ typedef enum
 	APP_STATE_GAMEPLAY_ENDED
 } AppState;
 
-typedef enum
+typedef enum : uint8_t // c99
 {
 	ACTION_MODE_INSPECT,
 	ACTION_MODE_BUILD_RAILS,
@@ -104,7 +108,7 @@ const char* g_actionModeButtonLabels[ACTION_MODE_COUNT] =
 
 // Camera
 //--------------------------------------------------------------------------------------
-typedef enum
+typedef enum : uint8_t // c99
 {
 	CAM_PAN_IDLE,
 	CAM_PAN_ACTIVE,
@@ -126,10 +130,13 @@ typedef struct CameraPanState
 
 // Art Assets
 //--------------------------------------------------------------------------------------
-typedef enum
+typedef enum : uint8_t // c99
 {
 	MODEL_RAILS_STRAIGHT,
 	MODEL_RAILS_CURVE,
+	MODEL_RAILS_MERGE,
+	MODEL_RAILS_MERGE_MIRROR,
+	MODEL_RAILS_CROSS,
 	MODEL_FACTORY_A,
 	MODEL_TRAIN_LOCOMOTIVE_A,
 	MODEL_COUNT
@@ -139,48 +146,115 @@ const char* g_modelFilePaths[MODEL_COUNT] =
 {
 	"resources/rails_straight_8.obj",
 	"resources/rails_curve_8.obj",
+	"resources/rails_merge_8.obj",
+	"resources/rails_merge_mirror_8.obj",
+	"resources/rails_crossing_8.obj",
 	"resources/factory_a_8.obj",
 	"resources/locomotive_a_8.obj",
 };
+
+const char* ModelIdToString(ModelID modelID)
+{
+	switch (modelID)
+	{
+		case MODEL_RAILS_STRAIGHT:     	return "Rails Straight";
+		case MODEL_RAILS_CURVE:      	return "Rails Curve";
+		case MODEL_RAILS_MERGE:      	return "Rails Merge";
+		case MODEL_RAILS_MERGE_MIRROR:  return "Rails Merge Mir";
+		case MODEL_RAILS_CROSS:      	return "Rails Cross";
+		case MODEL_FACTORY_A:     		return "Factory";
+		case MODEL_TRAIN_LOCOMOTIVE_A:  return "Locomotive";
+		case MODEL_COUNT:     			return "Data";
+		default:                 		return "Unknown";
+	}
+}
 
 static int MAX_MODELS_TO_LOAD_COUNT = MODEL_COUNT;
 
 // Map & tiles
 //--------------------------------------------------------------------------------------
-typedef enum
+typedef enum : uint8_t // c99
 {
-	TILE_EMPTY,
-	TILE_RAILS_STRAIGHT,
-	TILE_RAILS_CURVE,
-	TILE_RAILS_SPLIT,
-	TILE_RAILS_JOINER,
-	TILE_RAILS_CROSS,
-	TILE_RAILS_HALT_LIGHT,
-	TILE_RAILS_HALT_STATION,
+	TILE_TYPE_EMPTY,
+	TILE_TYPE_RAILS,
+	TILE_TYPE_TODO,
 } TileType;
 
-typedef enum
+const char* TileTypeToString(TileType tileType)
 {
-	DIRECTION_NORTH = 1 << 0,
-	DIRECTION_EAST  = 1 << 1,
-	DIRECTION_SOUTH = 1 << 2,
-	DIRECTION_WEST  = 1 << 3
-} DirectionFlag;
+	switch (tileType)
+	{
+		case TILE_TYPE_EMPTY:     return "TILE EMPTY";
+		case TILE_TYPE_RAILS:      return "TILE RAILS";
+		case TILE_TYPE_TODO:     return "Tile Todo";
+		default:                 return "UNKNOWN_SECTOR";
+	}
+}
 
-typedef uint8_t DirectionsInfo;
+typedef enum : uint8_t // c99
+{
+	CONNECTION_NS_SN = 1 << 0,
+	CONNECTION_NE_EN = 1 << 1,
+	CONNECTION_NW_WN = 1 << 2,
+	CONNECTION_ES_SE = 1 << 3,
+	CONNECTION_EW_WE = 1 << 4,
+	CONNECTION_SW_WS = 1 << 5,
+} ConnectionDirection;
+
+typedef uint8_t ConnectionsConfig;
 
 typedef struct TileInfo
 {
-	TileType type;
-	DirectionsInfo connectionOptions; // Bitflags for connectionOptions (NORTH, EAST, SOUTH, WEST)
+	TileType type;	// uint8_t enum 1 byte
+	ModelID modelID; // uint8_t enum 1 byte
+	ConnectionsConfig connectionOptions; // uint8 1 byte
+	ConnectionsConfig connectionsActive; // uint8 1 byte
+	float modelRotationInDegree; // 4 bytes, could be reduced to 2 bytes or even 1 byte if needed
 	// todo vehicle IDs and transition progress info etc
 } TileInfo;
+
 
 typedef struct
 {
 	int x;
 	int z;
 } TileCoords;
+
+typedef enum
+{
+	TILE_SECTOR_SE 		= 1 << 0,
+	TILE_SECTOR_S  		= 1 << 1,
+	TILE_SECTOR_SW 		= 1 << 2,
+	TILE_SECTOR_E 		= 1 << 3,
+	TILE_SECTOR_CENTER 	= 1 << 4,
+	TILE_SECTOR_W 		= 1 << 5,
+	TILE_SECTOR_NW 		= 1 << 6,
+	TILE_SECTOR_N 		= 1 << 7,
+	TILE_SECTOR_NE 		= 1 << 8,
+} TileSector;
+
+const char* TileSectorToString(TileSector sector)
+{
+	switch (sector)
+	{
+		case TILE_SECTOR_SE:     return "TILE_SECTOR_SE";
+		case TILE_SECTOR_S:      return "TILE_SECTOR_S";
+		case TILE_SECTOR_SW:     return "TILE_SECTOR_SW";
+		case TILE_SECTOR_E:      return "TILE_SECTOR_E";
+		case TILE_SECTOR_CENTER: return "TILE_SECTOR_CENTER";
+		case TILE_SECTOR_W:      return "TILE_SECTOR_W";
+		case TILE_SECTOR_NW:     return "TILE_SECTOR_NW";
+		case TILE_SECTOR_N:      return "TILE_SECTOR_N";
+		case TILE_SECTOR_NE:     return "TILE_SECTOR_NE";
+		default:                 return "UNKNOWN_SECTOR";
+	}
+}
+
+typedef struct
+{
+	TileCoords coords;
+	TileSector sector;
+} TileSectorTrail;
 
 // Game App State
 //--------------------------------------------------------------------------------------
@@ -194,6 +268,8 @@ static struct
 	Texture assetTexture;
 	Model assetModels[MODEL_COUNT];
 	TileInfo mapTiles[g_TileCount];
+	TileSectorTrail brushSectorTrail[g_MapGridSize * g_MapGridSize];
+	int brushSectorTrailLength;
 } g_game;
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -220,7 +296,7 @@ void GameAppInitializeState(void)
 // resets gameplay params
 void GameplayResetState(void)
 {
-	float halfGridSize = (float) g_GridSize * 0.5f;
+	float halfGridSize = (float) g_MapGridSize * 0.5f;
 	g_game.cameraControlValues = (CameraControlValues)
 	{
 		.pivot = (Vector3) {halfGridSize, 0, halfGridSize },
@@ -237,11 +313,13 @@ void GameplayResetState(void)
 	CameraUpdateFromControlValues();
 	g_game.actionMode = ACTION_MODE_INSPECT;
 
-	for (int tileIndex = 0; tileIndex < g_GridSize * g_GridSize; tileIndex++)
+	for (int tileIndex = 0; tileIndex < g_MapGridSize * g_MapGridSize; tileIndex++)
 	{
-		g_game.mapTiles[tileIndex].type = TILE_EMPTY;
+		g_game.mapTiles[tileIndex].type = TILE_TYPE_EMPTY;
 		g_game.mapTiles[tileIndex].connectionOptions = 0; // none
 	}
+
+	g_game.brushSectorTrailLength = 0;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -321,7 +399,7 @@ void inline CameraUpdateFromControlValues(void)
 	Vector3 pivot = g_game.cameraControlValues.pivot;
 	float zoomDistance = g_game.cameraControlValues.zoomDistance;
 	float rotation = g_game.cameraControlValues.rotation;
-	rotation += PI; // equivalent to 180 degrees
+	rotation -= PI * 0.5f; // equivalent to 180 degrees
 
 	// Calculate the new camera position based on rotation around the pivot
 	float cameraX = pivot.x + zoomDistance * cosf(rotation);
@@ -446,77 +524,6 @@ static void CameraTick(void)
 //----------------------------------------------------------------------------------------------------------------------
 // Map topics
 //----------------------------------------------------------------------------------------------------------------------
-
-static inline int MapTileIndexByCoords(int x, int y)
-{
-	return y * g_GridSize + x;
-}
-
-static inline TileCoords MapTileCoordsByIndex(int arrayIndex)
-{
-	TileCoords coords;
-
-	coords.z = arrayIndex / g_GridSize;
-	coords.x = arrayIndex % g_GridSize;
-
-	return coords;
-}
-
-static inline void MapDirectionSetFlag(DirectionsInfo* flags, DirectionFlag flag)
-{
-	*flags |= flag;
-}
-
-static inline void MapDirectionClearFlag(DirectionsInfo* flags, DirectionFlag flag)
-{
-	*flags &= ~flag;
-}
-static inline int MapDirectionIsFlagSet(DirectionsInfo flags, DirectionFlag flag)
-{
-	return flags & flag;
-}
-
-static inline void MapDirectionSetAll(DirectionsInfo* flags, bool north, bool east, bool south, bool west)
-{
-	*flags = 0; // Clear all flags initially
-	if (north) *flags |= DIRECTION_NORTH;
-	if (south) *flags |= DIRECTION_SOUTH;
-	if (east) *flags |= DIRECTION_EAST;
-	if (west) *flags |= DIRECTION_WEST;
-}
-
-static inline void MapTileSetData(int x, int y, TileType type, bool north, bool east, bool south, bool west)
-{
-	int index = MapTileIndexByCoords(x, y);
-	g_game.mapTiles[index].type = type;
-	MapDirectionSetAll(&(g_game.mapTiles[index].connectionOptions), north, east, south, west);
-}
-
-// Get the grid tile  coordinates
-static inline TileCoords TileGetCoordsFromWorldPoint(Vector3 position)
-{
-	TileCoords tileCoords;
-
-	tileCoords.x = (int) position.x;
-	tileCoords.z = (int) position.z;
-
-	// Ensure the indices are within the bounds of the grid
-	tileCoords.x = (tileCoords.x < 0) ? 0 : (tileCoords.x >= g_GridSize) ? g_GridSize - 1 : tileCoords.x;
-	tileCoords.z = (tileCoords.z < 0) ? 0 : (tileCoords.z >= g_GridSize) ? g_GridSize - 1 : tileCoords.z;
-
-	return tileCoords;
-}
-
-// Calculate the center position of the grid tile
-static inline Vector3 TileGetCenterPosition(TileCoords tileCoords)
-{
-	Vector3 worldPosition;
-	worldPosition.x = (float) tileCoords.x + 0.5f;
-	worldPosition.z = (float) tileCoords.z + 0.5f;
-	worldPosition.y = 0.01f;
-	return worldPosition;
-}
-
 void DrawGridAt(int slices, float spacing, float x, float y, float z, Color mainColor, Color axisColor)
 {
 	int halfSlices = slices/2;
@@ -539,6 +546,475 @@ void DrawGridAt(int slices, float spacing, float x, float y, float z, Color main
 		rlVertex3f((float)halfSlices*spacing + x, y, (float)i*spacing + z);
 	}
 	rlEnd();
+}
+
+static inline int TileIndexByTileCoords(int x, int y)
+{
+	return y * g_MapGridSize + x;
+}
+
+static inline TileCoords TileCoordsByIndex(int arrayIndex)
+{
+	TileCoords coords;
+
+	coords.z = arrayIndex / g_MapGridSize;
+	coords.x = arrayIndex % g_MapGridSize;
+
+	return coords;
+}
+
+static inline void TileAddConnectionFlag(ConnectionsConfig* target, ConnectionDirection additionalFlag)
+{
+	*target |= additionalFlag;
+}
+
+static inline void MapTileRemoveConnectionFlag(ConnectionsConfig* flags, ConnectionDirection flag)
+{
+	*flags &= ~flag;
+}
+
+static inline bool TileHasConnectionFlag(ConnectionsConfig flags, ConnectionDirection flag)
+{
+	return (flags & flag) != 0;
+}
+
+static inline int TileHConnectionsCount(ConnectionsConfig flags)
+{
+	int count = 0;
+	while (flags)
+	{
+		flags &= (flags - 1); // Clear the least significant set bit
+		count++;
+	}
+	return count;
+}
+
+static inline void TileAddRailConnection(int x, int y, ConnectionDirection connection)
+{
+	int index = TileIndexByTileCoords(x, y);
+	g_game.mapTiles[index].type = TILE_TYPE_RAILS;
+	TileAddConnectionFlag(&(g_game.mapTiles[index].connectionOptions), connection);
+}
+
+// Get the grid tile  coordinates
+static inline TileCoords TileGetCoordsFromWorldPoint(Vector3 position)
+{
+	TileCoords tileCoords;
+
+	tileCoords.x = (int) position.x;
+	tileCoords.z = (int) position.z;
+
+	// Ensure the indices are within the bounds of the grid
+	tileCoords.x = (tileCoords.x < 0) ? 0 : (tileCoords.x >= g_MapGridSize) ? g_MapGridSize - 1 : tileCoords.x;
+	tileCoords.z = (tileCoords.z < 0) ? 0 : (tileCoords.z >= g_MapGridSize) ? g_MapGridSize - 1 : tileCoords.z;
+
+	return tileCoords;
+}
+
+// Calculate the center position of the grid tile
+static inline Vector3 TileGetCenterPosition(TileCoords tileCoords)
+{
+	Vector3 worldPosition;
+	worldPosition.x = (float) tileCoords.x + 0.5f;
+	worldPosition.z = (float) tileCoords.z + 0.5f;
+	worldPosition.y = 0.01f;
+	return worldPosition;
+}
+
+static inline TileSector TileSectorGetFromWorldPoint(Vector3 position)
+{
+	// Get the fractional part of the position within the tile
+	float fracX = position.x - (int) position.x;
+	float fracZ = position.z - (int) position.z;
+
+	// Determine the sector based on fractional coordinates
+	if (fracX < 0.33f)
+	{
+		if (fracZ < 0.33f) return TILE_SECTOR_SE;
+		else if (fracZ < 0.66f) return TILE_SECTOR_E;
+		else return TILE_SECTOR_NE;
+	}
+	else if (fracX < 0.66f)
+	{
+		if (fracZ < 0.33f) return TILE_SECTOR_S;
+		else if (fracZ < 0.66f) return TILE_SECTOR_CENTER;
+		else return TILE_SECTOR_N;
+	}
+	else
+	{
+		if (fracZ < 0.33f) return TILE_SECTOR_SW;
+		else if (fracZ < 0.66f) return TILE_SECTOR_W;
+		else return TILE_SECTOR_NW;
+	}
+}
+
+static inline Vector3 TileSectorGetCenterPosition(TileCoords tileCoords, TileSector sector)
+{
+	Vector3 worldPosition;
+
+	// Calculate the base tile center position
+	worldPosition.x = (float) tileCoords.x;
+	worldPosition.z = (float) tileCoords.z;
+	worldPosition.y = 0.0f; // Set y-coordinate based on your needs
+
+	// Offset within the tile based on the sector
+	float offset = 1.0f / 3.0f;  // One-third offset for a 3x3 grid of sectors
+	switch (sector)
+	{
+		case TILE_SECTOR_SE:
+			worldPosition.x += offset * 0.5f;
+			worldPosition.z += offset * 0.5f;
+			break;
+		case TILE_SECTOR_E:
+			worldPosition.x += offset * 0.5f;
+			worldPosition.z += offset * 1.5f;
+			break;
+		case TILE_SECTOR_NE:
+			worldPosition.x += offset * 0.5f;
+			worldPosition.z += offset * 2.5f;
+			break;
+		case TILE_SECTOR_S:
+			worldPosition.x += offset * 1.5f;
+			worldPosition.z += offset * 0.5f;
+			break;
+		case TILE_SECTOR_CENTER:
+			worldPosition.x += offset * 1.5f;
+			worldPosition.z += offset * 1.5f;
+			break;
+		case TILE_SECTOR_N:
+			worldPosition.x += offset * 1.5f;
+			worldPosition.z += offset * 2.5f;
+			break;
+		case TILE_SECTOR_SW:
+			worldPosition.x += offset * 2.5f;
+			worldPosition.z += offset * 0.5f;
+			break;
+		case TILE_SECTOR_W:
+			worldPosition.x += offset * 2.5f;
+			worldPosition.z += offset * 1.5f;
+			break;
+		case TILE_SECTOR_NW:
+			worldPosition.x += offset * 2.5f;
+			worldPosition.z += offset * 2.5f;
+			break;
+		default:
+			// TILE_SECTOR_NONE
+			worldPosition = Vector3Zero();
+			break;
+	}
+
+	return worldPosition;
+}
+
+static inline bool TileCoordsAreEqual(TileCoords a, TileCoords b)
+{
+	return (a.x == b.x) && (a.z == b.z);
+}
+
+static inline float DegreesToRadians(float degrees)
+{
+	return degrees * (PI / 180.0f);
+}
+
+void TileUpdateRailsModel(TileCoords coords)
+{
+	int tileIndex = TileIndexByTileCoords(coords.x, coords.z);
+	TileInfo tile = g_game.mapTiles[tileIndex];
+	int connectionCount = TileHConnectionsCount(tile.connectionOptions);
+	if(connectionCount == 1)
+	{
+		tile.type = TILE_TYPE_RAILS;
+		if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN))
+		{
+			tile.modelID = MODEL_RAILS_STRAIGHT;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE))
+		{
+			tile.modelID = MODEL_RAILS_STRAIGHT;
+			tile.modelRotationInDegree = 90;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_ES_SE))
+		{
+			tile.modelID = MODEL_RAILS_CURVE;
+			tile.modelRotationInDegree = 0;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NE_EN))
+		{
+			tile.modelID = MODEL_RAILS_CURVE;
+			tile.modelRotationInDegree = 90;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NW_WN))
+		{
+			tile.modelID = MODEL_RAILS_CURVE;
+			tile.modelRotationInDegree = 180;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_SW_WS))
+		{
+			tile.modelID = MODEL_RAILS_CURVE;
+			tile.modelRotationInDegree = 270;
+		}
+		// todo
+	}
+	else if(connectionCount == 2)
+	{
+		tile.type = TILE_TYPE_RAILS;
+		if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE))
+		{
+			tile.modelID = MODEL_RAILS_CROSS;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_ES_SE))
+		{
+			tile.modelID = MODEL_RAILS_MERGE;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NE_EN))
+		{
+			tile.modelID = MODEL_RAILS_MERGE_MIRROR;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NW_WN))
+		{
+			tile.modelID = MODEL_RAILS_MERGE;
+			tile.modelRotationInDegree = 180;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_SW_WS))
+		{
+			tile.modelID = MODEL_RAILS_MERGE_MIRROR;
+			tile.modelRotationInDegree = 180;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_SW_WS))
+		{
+			tile.modelID = MODEL_RAILS_MERGE;
+			tile.modelRotationInDegree = 270;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NW_WN))
+		{
+			tile.modelID = MODEL_RAILS_MERGE_MIRROR;
+			tile.modelRotationInDegree = 270;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NE_EN))
+		{
+			tile.modelID = MODEL_RAILS_MERGE_MIRROR;
+			tile.modelRotationInDegree = 90;
+		}
+	}
+	g_game.mapTiles[tileIndex] = tile;
+}
+
+void SectorTrailBakeConnection()
+{
+	if(g_game.brushSectorTrailLength < 2)
+	{
+		return;
+	}
+
+	TileCoords tileCoord = g_game.brushSectorTrail[0].coords;
+	// todo get tile info, is there already something build?
+
+	if(g_game.brushSectorTrailLength == 2)
+	{
+		// todo
+	}
+	else if(g_game.brushSectorTrailLength == 3)
+	{
+		TileSector first = g_game.brushSectorTrail[0].sector;
+		TileSector last = g_game.brushSectorTrail[g_game.brushSectorTrailLength -1].sector;
+
+		if
+		(
+			// Straight NS / SN
+			(first == TILE_SECTOR_N && last == TILE_SECTOR_S) ||
+			(first == TILE_SECTOR_S && last == TILE_SECTOR_N) ||
+			(first == TILE_SECTOR_SW && last == TILE_SECTOR_NW) ||
+			(first == TILE_SECTOR_NE && last == TILE_SECTOR_SE)
+		)
+		{
+			TileAddRailConnection(tileCoord.x, tileCoord.z, CONNECTION_NS_SN);
+
+		}
+		else if
+		(
+			// Straight EW / WE
+			(first == TILE_SECTOR_W && last == TILE_SECTOR_E) ||
+			(first == TILE_SECTOR_E && last == TILE_SECTOR_W) ||
+			(first == TILE_SECTOR_SE && last == TILE_SECTOR_SW) ||
+			(first == TILE_SECTOR_NE && last == TILE_SECTOR_NW)
+		)
+		{
+			TileAddRailConnection(tileCoord.x, tileCoord.z, CONNECTION_EW_WE);
+		}
+		else if
+		(
+			// Curve SE / ES
+			(first == TILE_SECTOR_S && last == TILE_SECTOR_E) ||
+			(first == TILE_SECTOR_E && last == TILE_SECTOR_S)
+		)
+		{
+			TileAddRailConnection(tileCoord.x, tileCoord.z, CONNECTION_ES_SE);
+		}
+		else if
+		(
+			// Curve SW / WS
+			(first == TILE_SECTOR_S && last == TILE_SECTOR_W) ||
+			(first == TILE_SECTOR_W && last == TILE_SECTOR_S)
+		)
+		{
+			TileAddRailConnection(tileCoord.x, tileCoord.z, CONNECTION_SW_WS);
+		}
+		else if
+		(
+			// Curve NW / WN
+			(first == TILE_SECTOR_N && last == TILE_SECTOR_W) ||
+			(first == TILE_SECTOR_W && last == TILE_SECTOR_N)
+		)
+		{
+			TileAddRailConnection(tileCoord.x, tileCoord.z, CONNECTION_NW_WN);
+		}
+		else if
+		(
+			// Curve NE / EN
+			(first == TILE_SECTOR_N && last == TILE_SECTOR_E) ||
+			(first == TILE_SECTOR_E && last == TILE_SECTOR_N)
+		)
+		{
+			TileAddRailConnection(tileCoord.x, tileCoord.z, CONNECTION_NE_EN);
+		}
+		// todo ----------------- ----------------- ----------------- ----------------- ----------------- -----------------
+	}
+	TileUpdateRailsModel(tileCoord);
+}
+
+void SectorTrailPaintAt(TileCoords coords, TileSector sector)
+{
+	// ignore if it's the same as we registered last time
+	if(g_game.brushSectorTrailLength > 0 )
+	{
+		int previousIndex = g_game.brushSectorTrailLength - 1;
+		TileCoords previousCoords = g_game.brushSectorTrail[previousIndex].coords;
+		bool tileIsTheSame = TileCoordsAreEqual(previousCoords, coords);
+		if(tileIsTheSame)
+		{
+			if(g_game.brushSectorTrail[previousIndex].sector == sector)
+			{
+				// ignore if it's the same sector
+				return;
+			}
+		}
+		else
+		{
+			// we moved into the next tile
+			// create trail todo
+			SectorTrailBakeConnection();
+
+			// reset sector trail
+			g_game.brushSectorTrailLength = 0;
+		}
+	}
+
+	// add sector to trail
+	int index = g_game.brushSectorTrailLength;
+	g_game.brushSectorTrail[index].coords = coords;
+	g_game.brushSectorTrail[index].sector = sector;
+	g_game.brushSectorTrailLength++;
+}
+
+//ConnectionDirection SectorTrail
+
+static inline RayCollision MapMouseRaycast()
+{
+	Ray mouseRay = GetMouseRay(GetMousePosition(), g_game.camera);
+	float cornerValue = (float) g_MapGridSize;
+	RayCollision rayCollision = GetRayCollisionQuad
+	(
+		mouseRay,
+		(Vector3) {0, 0, 0},
+		(Vector3) {cornerValue, 0, 0},
+		(Vector3) {cornerValue, 0, cornerValue},
+		(Vector3) {0, 0, cornerValue}
+	);
+	return rayCollision;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+// Debug
+//----------------------------------------------------------------------------------------------------------------------
+
+void RenderDebugWindow()
+{
+	if(IsKeyPressed(g_debugWindowKey))
+	{
+		g_debugWindowOn = !g_debugWindowOn;
+	}
+
+	if(g_debugWindowOn)
+	{
+		float lineHeight = 20;
+		Rectangle rect = (Rectangle) {16, 80, 180, 400};
+		GuiDrawRectangle(rect, 2, COLOR_BLACK, COLOR_GREY);
+		RayCollision rayCollision = MapMouseRaycast();
+		rect.x += 10;
+		if(rayCollision.hit)
+		{
+			TileCoords tileCoords = TileGetCoordsFromWorldPoint(rayCollision.point);
+			int tileIndex = TileIndexByTileCoords(tileCoords.x, tileCoords.z);
+			TileInfo tile = g_game.mapTiles[tileIndex];
+
+			char textBuffer[64];
+			rect.y = 0;
+			sprintf(textBuffer, "TileCoords: x=%d, z=%d", tileCoords.x, tileCoords.z);
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			TileSector sector = TileSectorGetFromWorldPoint(rayCollision.point);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Sector: %s", TileSectorToString(sector));
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Sector: %s", TileTypeToString(tile.type));
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			int connectionCount = TileHConnectionsCount(tile.connectionOptions);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Connection Count: %d", connectionCount);
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Rotation: %f", tile.modelRotationInDegree);
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Model: %s", ModelIdToString(tile.modelID));
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			bool connection_NS = TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Connection NS-SN: %s", connection_NS ? "True" : "False");
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			bool connection_WE = TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Connection EW-WE: %s", connection_WE ? "True" : "False");
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			bool connection_SW = TileHasConnectionFlag(tile.connectionOptions, CONNECTION_SW_WS);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Connection SW-WS: %s", connection_SW ? "True" : "False");
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			bool connection_NW = TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NW_WN);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Connection NW_WN: %s", connection_NW ? "True" : "False");
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			bool connection_NE = TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NE_EN);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Connection NE_EN: %s", connection_NE ? "True" : "False");
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			bool connection_ES = TileHasConnectionFlag(tile.connectionOptions, CONNECTION_ES_SE);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Connection ES_SE: %s", connection_ES ? "True" : "False");
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+		}
+	}
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -586,62 +1062,74 @@ void TickMainLoop(void)
 		// Render 3D scene
 		BeginMode3D(g_game.camera);
 
-			float width = (float) g_GridSize;
+			float width = (float) g_MapGridSize;
 			float center = width * 0.5f;
 			DrawPlane((Vector3){ center, 0.0f, center }, (Vector2){ width, width }, COLOR_GREEN); // ground plane
-			DrawGridAt(g_GridSize, 1.0f, center, 0.01f, center, COLOR_BLACK, COLOR_RED);
+			DrawGridAt(g_MapGridSize, 1.0f, center, 0.01f, center, COLOR_BLACK, COLOR_RED);
 
 			// debug markers
 			DrawSphere((Vector3){ 0.0f, 0.0f, 0.0f }, 0.1f, COLOR_RED); // map origin
+			DrawSphere((Vector3){ 0.5f, 0.0f, 0.0f }, 0.1f, COLOR_RED); // map origin
+			DrawSphere((Vector3){ 1.0f, 0.0f, 0.0f }, 0.1f, COLOR_RED); // map origin
 			DrawSphere((Vector3){width, 0, width}, 0.1f, COLOR_YELLOW); // map far end
-//			for (int i = 0; i < MAX_MODELS_TO_LOAD_COUNT; i++)
-//			{
-//				DrawModel(g_game.assetModels[i], (Vector3) {1.0f * (float) i, 0.0f,1.0f}, 1.0f, WHITE);
-//			}
+			DrawSphere((Vector3){width, 0, width - 0.5f}, 0.1f, COLOR_YELLOW); // map far end
+			DrawSphere((Vector3){width, 0, width - 1.0f}, 0.1f, COLOR_YELLOW); // map far end
 
-
-			// remove this from drawing ----------------------------------------------------------------------------------
-			// what's the point coordinate on the world plane?
-			Ray mouseRay = GetMouseRay(GetMousePosition(), g_game.camera);
-			float cornerValue = (float) +g_GridSize;
-			RayCollision rayCollision = GetRayCollisionQuad
-			(
-					mouseRay,
-					(Vector3) {0, 0, 0},
-					(Vector3) {cornerValue, 0, 0},
-					(Vector3) {cornerValue, 0, cornerValue},
-					(Vector3) {0, 0, cornerValue}
-			);
-
+			RayCollision rayCollision = MapMouseRaycast();
 			if(rayCollision.hit)
 			{
 				TileCoords tileCoords = TileGetCoordsFromWorldPoint(rayCollision.point);
 				Vector3 tileCenterPoint = TileGetCenterPosition(tileCoords);
+				TileSector sector = TileSectorGetFromWorldPoint(rayCollision.point);
+				Vector3 sectorCenterPoint = TileSectorGetCenterPosition(tileCoords, sector);
 
 				// draw grid cursor
+				DrawCube(tileCenterPoint, 1, 0.01f, 1, COLOR_BLUE);
+
+				// draw grid sector cursor
 				if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) == false && IsKeyDown(KEY_SPACE) == false && g_game.cameraPanState.panningState == CAM_PAN_IDLE)
 				{
 					//DrawCube(rayCollision.point, 1, 0.2f, 1, COLOR_YELLOW);
-					DrawCube(tileCenterPoint, 1, 0.2f, 1, COLOR_BLUE);
+					DrawCube(sectorCenterPoint, 0.33f, 0.1f, 0.33f, COLOR_WHITE);
 				}
-				else if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) )
+				else if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) ||IsKeyDown(KEY_SPACE) )
 				{
-					MapTileSetData(tileCoords.x, tileCoords.z, TILE_RAILS_STRAIGHT, true, false, true, false);
+
+					SectorTrailPaintAt(tileCoords, sector);
+					//TileAddRailConnection(tileCoords.x, tileCoords.z, TILE_TYPE_RAILS, true, false, true, false);
+				}
+				if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT) || IsKeyReleased(KEY_SPACE))
+				{
+					// todo analyse trail
+					// todo register change
+					if(g_game.brushSectorTrailLength > 0)
+					{
+						SectorTrailBakeConnection();
+					}
+					g_game.brushSectorTrailLength = 0;
 				}
 			}
 
+			// draw models on tiles
 			for(int tileIndex = 0; tileIndex < g_TileCount; ++tileIndex)
 			{
-				if(g_game.mapTiles[tileIndex].type == TILE_RAILS_STRAIGHT)
+				TileInfo tile = g_game.mapTiles[tileIndex];
+				if(tile.type == TILE_TYPE_RAILS)
 				{
-					TileCoords tileCoords = MapTileCoordsByIndex(tileIndex);
+					TileCoords tileCoords = TileCoordsByIndex(tileIndex);
 					Vector3 tileCenter = TileGetCenterPosition(tileCoords);
-					DrawModel(g_game.assetModels[MODEL_RAILS_STRAIGHT], tileCenter, 1.0f, WHITE);
+					DrawModelEx(g_game.assetModels[tile.modelID], tileCenter, (Vector3) {0,1,0}, tile.modelRotationInDegree, Vector3One(), COLOR_WHITE);
 				}
 			}
 
-
-			//GetTileCoords
+			// draw tile sector based paint brush cursor
+			for(int tileSectorIndex = 0; tileSectorIndex < g_game.brushSectorTrailLength; tileSectorIndex++)
+			{
+				TileCoords coords = g_game.brushSectorTrail[tileSectorIndex].coords;
+				TileSector sector = g_game.brushSectorTrail[tileSectorIndex].sector;
+				Vector3 sectorCenterPoint = TileSectorGetCenterPosition(coords, sector);
+				DrawCube(sectorCenterPoint, 0.33f, 0.13f, 0.33f, COLOR_GREY);
+			}
 
 		EndMode3D();
 
@@ -652,7 +1140,10 @@ void TickMainLoop(void)
 		DrawRectangleLinesEx((Rectangle){0, 0, (float) g_ScreenWidth, (float) g_ScreenHeight }, (float) frameThickness, COLOR_GREY);
 
 		TickToolbarUI();
+		RenderDebugWindow();
 		DrawFPS(20, 20);
+
+
     EndDrawing();
     //----------------------------------------------------------------------------------  
 }
