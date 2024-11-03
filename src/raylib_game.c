@@ -65,8 +65,11 @@ static const float g_CameraZoomSpeedFactor = 0.10f;
 static const int g_MapGridSize = 64;
 static const int g_TileCount = g_MapGridSize * g_MapGridSize;
 
+static const int g_MaxTrains = 64;
+
 static const KeyboardKey g_debugWindowKey = KEY_TAB;
-static bool g_debugWindowOn = false;
+static bool g_debugWindowOn = true; // todo turn off
+static bool g_debugSimPauseOn = false;
 
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -85,11 +88,9 @@ typedef enum : uint8_t // c99
 
 typedef enum : uint8_t // c99
 {
-	ACTION_MODE_INSPECT,
+	ACTION_MODE_PAN_VIEW,
 	ACTION_MODE_BUILD_RAILS,
-	ACTION_MODE_BUILD_RESOURCER,
-	ACTION_MODE_BUILD_PROCESSOR,
-	ACTION_MODE_BUILD_CITY,
+	ACTION_MODE_CHANGE_SIGNALS,
 	ACTION_MODE_BUILD_BULLDOZER,
 	ACTION_MODE_COUNT,
 } InteractionMode;
@@ -98,11 +99,9 @@ const int g_interactionModeKeyboardShortcuts[ACTION_MODE_COUNT] = { KEY_Z, KEY_X
 
 const char* g_actionModeButtonLabels[ACTION_MODE_COUNT] =
 {
-		"#21#Inspect",
+		"#44#View",
 		"#171#Rails",
-		"#210#Resourcing",
-		"#209#Processor",
-		"#185#City",
+		"#174#Signals",
 		"#143#Bulldozer"
 };
 
@@ -201,6 +200,20 @@ typedef enum : uint8_t // c99
 	CONNECTION_SW_WS = 1 << 5,
 } ConnectionDirection;
 
+const char* ConnectionDirectionToString(ConnectionDirection direction)
+{
+	switch (direction)
+	{
+		case CONNECTION_NS_SN:	    return "NS_SN";
+		case CONNECTION_NE_EN:      return "NE_EN";
+		case CONNECTION_NW_WN:     	return "NW_WN";
+		case CONNECTION_ES_SE:      return "ES_SE";
+		case CONNECTION_EW_WE: 		return "EW_WE";
+		case CONNECTION_SW_WS:      return "SW_WS";
+		default: 	                return "UNKNOWN";
+	}
+}
+
 typedef uint8_t ConnectionsConfig;
 
 typedef struct TileInfo
@@ -212,7 +225,6 @@ typedef struct TileInfo
 	float modelRotationInDegree; // 4 bytes, could be reduced to 2 bytes or even 1 byte if needed
 	// todo vehicle IDs and transition progress info etc
 } TileInfo;
-
 
 typedef struct
 {
@@ -256,6 +268,39 @@ typedef struct
 	TileSector sector;
 } TileSectorTrail;
 
+// train stuff
+//--------------------------------------------------------------------------------------
+
+typedef enum : uint8_t // c99
+{
+	TRAIN_STATE_DISABLED = 0, // don't render, don't process
+	TRAIN_STATE_HIDDEN, 	 // render differently, don't process
+	TRAIN_STATE_BLOCKED, 	// reach a track end or red signal
+	TRAIN_STATE_DRIVING,
+	TRAIN_STATE_UNLOAD, 	// first unload then load
+	TRAIN_STATE_LOAD,
+	TRAIN_STATE_DERAILED, 	// non-operational and non-recoverable
+} TrainState;
+
+typedef struct TrainInfo
+{
+	TrainState state;	// uint8_t enum 1 byte
+	ModelID modelID; // uint8_t enum 1 byte
+	TileCoords tileCurrent;
+	TileCoords tilePrevious;
+	TileCoords tileNext;
+	ConnectionDirection tileConnectionUsed;
+	TileSector driveFromSector;
+	TileSector driveToSector;
+	float pathProgressNormalized;
+	float modelRotationInDegree;
+	float speedDrive;
+	float speedUnload;
+	float speedLoad;
+	Vector2 pathCurvePoints[4];
+	Vector3 modelPosition;
+} TrainInfo;
+
 // Game App State
 //--------------------------------------------------------------------------------------
 static struct
@@ -270,18 +315,24 @@ static struct
 	TileInfo mapTiles[g_TileCount];
 	TileSectorTrail brushSectorTrail[g_MapGridSize * g_MapGridSize];
 	int brushSectorTrailLength;
+	TrainInfo trains[g_MaxTrains];
 } g_game;
 
 //----------------------------------------------------------------------------------------------------------------------
-// Functions Declaration
+// Functions Forward Declaration [as needed]
 //----------------------------------------------------------------------------------------------------------------------
 static void AssetsLoad(void);
 static void GameAppInitializeState(void);				// prepare all static / global data before starting running the main loop
 static void GameplayResetState(void);
 static void TickMainLoop(void);							// Update and Draw one frame
-static void CameraTick(void);
+static void TickCamera(void);
+static void TickTrains(void);
 static void CameraUpdateFromControlValues(void);
 static void AssetsUnload(void);
+static void TileUpdateRailsModel(int x, int z);
+static inline void TileAddRailConnection(int x, int y, ConnectionDirection connection);
+inline static void TileAddConnectionAndUpdateRailsModel(int x, int z, ConnectionDirection direction);
+static inline Vector3 TileGetCenterPosition(TileCoords tileCoords);
 
 //----------------------------------------------------------------------------------------------------------------------
 // App Reset management
@@ -296,6 +347,7 @@ void GameAppInitializeState(void)
 // resets gameplay params
 void GameplayResetState(void)
 {
+	// setup camera
 	float halfGridSize = (float) g_MapGridSize * 0.5f;
 	g_game.cameraControlValues = (CameraControlValues)
 	{
@@ -311,15 +363,77 @@ void GameplayResetState(void)
 	};
 
 	CameraUpdateFromControlValues();
-	g_game.actionMode = ACTION_MODE_INSPECT;
+	g_game.actionMode = ACTION_MODE_BUILD_RAILS;
 
+	// clear map
 	for (int tileIndex = 0; tileIndex < g_MapGridSize * g_MapGridSize; tileIndex++)
 	{
 		g_game.mapTiles[tileIndex].type = TILE_TYPE_EMPTY;
 		g_game.mapTiles[tileIndex].connectionOptions = 0; // none
+		g_game.mapTiles[tileIndex].connectionsActive = 0;
 	}
 
+	// clear rail paint brush
 	g_game.brushSectorTrailLength = 0;
+
+	//////////////////////////////////////////////////////////////////////////////////
+	// set starting rail tracks
+	// loop track
+	TileAddConnectionAndUpdateRailsModel(29, 29, CONNECTION_EW_WE);
+	TileAddConnectionAndUpdateRailsModel(30, 29, CONNECTION_NE_EN);
+	TileAddConnectionAndUpdateRailsModel(30, 30, CONNECTION_NS_SN);
+	TileAddConnectionAndUpdateRailsModel(30, 31, CONNECTION_ES_SE);
+	TileAddConnectionAndUpdateRailsModel(29, 31, CONNECTION_EW_WE);
+	TileAddConnectionAndUpdateRailsModel(28, 31, CONNECTION_SW_WS);
+	TileAddConnectionAndUpdateRailsModel(28, 30, CONNECTION_NS_SN );
+	TileAddConnectionAndUpdateRailsModel(28, 29, CONNECTION_NW_WN);
+	// loop track exit
+	TileAddConnectionAndUpdateRailsModel(30, 29, CONNECTION_EW_WE);
+	// straight outside loop fragments
+	TileAddConnectionAndUpdateRailsModel(32, 29, CONNECTION_EW_WE);
+	TileAddConnectionAndUpdateRailsModel(33, 30, CONNECTION_NS_SN);
+	TileAddConnectionAndUpdateRailsModel(31, 31, CONNECTION_EW_WE);
+	// turn back towards loop
+	TileAddConnectionAndUpdateRailsModel(33, 31, CONNECTION_ES_SE);
+
+	// reset all trains
+	for(int i = 0; i < g_MaxTrains; ++i)
+	{
+		g_game.trains[i].state = TRAIN_STATE_DISABLED;
+		g_game.trains[i].modelRotationInDegree = 0;
+		g_game.trains[0].modelPosition = (Vector3) {0,0,0};
+		g_game.trains[i].modelID = MODEL_TRAIN_LOCOMOTIVE_A;
+		g_game.trains[i].tileCurrent = (TileCoords) {0,0};
+
+		g_game.trains[i].speedDrive = 0.5f;
+		g_game.trains[i].speedLoad = 3;
+		g_game.trains[i].speedUnload = 3;
+		g_game.trains[i].pathProgressNormalized = 0;
+		g_game.trains[i].pathCurvePoints[0] = Vector2Zero();
+		g_game.trains[i].pathCurvePoints[1] = Vector2Zero();
+		g_game.trains[i].pathCurvePoints[2] = Vector2Zero();
+		g_game.trains[i].pathCurvePoints[3] = Vector2Zero();
+		g_game.trains[i].tileConnectionUsed = 0;
+		g_game.trains[i].driveFromSector = TILE_SECTOR_CENTER;
+		g_game.trains[i].driveToSector = TILE_SECTOR_CENTER;
+	}
+
+	// set up starting train
+	TileCoords tileCoord = (TileCoords) {30,30};
+	g_game.trains[0].state = TRAIN_STATE_DRIVING;
+	g_game.trains[0].tilePrevious = (TileCoords) {30,29};
+	g_game.trains[0].tileNext = (TileCoords) {30,31};
+	g_game.trains[0].tileCurrent = tileCoord;
+	g_game.trains[0].modelPosition = TileGetCenterPosition(tileCoord);
+	g_game.trains[0].modelRotationInDegree = 0;
+	g_game.trains[0].modelID = MODEL_TRAIN_LOCOMOTIVE_A;
+	g_game.trains[0].speedDrive = 0.5f;
+	g_game.trains[0].speedLoad = 3;
+	g_game.trains[0].speedUnload = 3;
+	g_game.trains[0].pathProgressNormalized = 0.5f; // start in the middle of the tile track
+	g_game.trains[0].tileConnectionUsed = CONNECTION_NS_SN;
+	g_game.trains[0].driveFromSector = TILE_SECTOR_S;
+	g_game.trains[0].driveToSector = TILE_SECTOR_N;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -416,7 +530,7 @@ void inline CameraUpdateFromControlValues(void)
 	};
 }
 
-static void CameraTick(void)
+static void TickCamera(void)
 {
 	bool cameraNeedsUpdating = false;
 
@@ -593,7 +707,29 @@ static inline void TileAddRailConnection(int x, int y, ConnectionDirection conne
 {
 	int index = TileIndexByTileCoords(x, y);
 	g_game.mapTiles[index].type = TILE_TYPE_RAILS;
+
+	int count = TileHConnectionsCount(g_game.mapTiles[index].connectionOptions);
+	if(count == 0)
+	{
+		// this is the first connection and therefore active by default
+		g_game.mapTiles[index].connectionsActive = connection;
+	}
+
+	// add connection
 	TileAddConnectionFlag(&(g_game.mapTiles[index].connectionOptions), connection);
+
+	if(count == 1)
+	{
+		// check if it's a crossing and only add it then
+		bool isCrossingRails =
+		TileHasConnectionFlag(g_game.mapTiles[index].connectionOptions, CONNECTION_NS_SN) &&
+		TileHasConnectionFlag(g_game.mapTiles[index].connectionOptions, CONNECTION_EW_WE);
+
+		if(isCrossingRails)
+		{
+			TileAddConnectionFlag(&(g_game.mapTiles[index].connectionsActive), connection);
+		}
+	}
 }
 
 // Get the grid tile  coordinates
@@ -706,6 +842,36 @@ static inline Vector3 TileSectorGetCenterPosition(TileCoords tileCoords, TileSec
 	return worldPosition;
 }
 
+static inline Vector3 TileSectorGetEdgePosition(TileCoords tileCoords, TileSector sector)
+{
+	// center position for desired sector
+	Vector3 worldPosition = TileSectorGetCenterPosition(tileCoords, sector);
+
+	// Offset for the edges of the tile
+	float halfSectorOffset = 1.0f / 3.0f * 0.5f;
+
+	switch (sector)
+	{
+		case TILE_SECTOR_N:
+			worldPosition.z += halfSectorOffset;  // Top edge along Z-axis
+			break;
+		case TILE_SECTOR_S:
+			worldPosition.z -= halfSectorOffset;	// Bottom edge along Z-axis
+			break;
+		case TILE_SECTOR_W:
+			worldPosition.x += halfSectorOffset;        // Left edge along X-axis
+			break;
+		case TILE_SECTOR_E:
+			worldPosition.x -= halfSectorOffset;  // Right edge along X-axis
+			break;
+		default:
+			worldPosition = Vector3Zero();
+			break;
+	}
+
+	return worldPosition;
+}
+
 static inline bool TileCoordsAreEqual(TileCoords a, TileCoords b)
 {
 	return (a.x == b.x) && (a.z == b.z);
@@ -716,9 +882,110 @@ static inline float DegreesToRadians(float degrees)
 	return degrees * (PI / 180.0f);
 }
 
-void TileUpdateRailsModel(TileCoords coords)
+static TileSector TileSectorGetExitFromEntryAndConnectionDirection(ConnectionDirection connection, TileSector entry)
 {
-	int tileIndex = TileIndexByTileCoords(coords.x, coords.z);
+	if(connection == CONNECTION_NS_SN)
+	{
+		return entry == TILE_SECTOR_N ? TILE_SECTOR_S : TILE_SECTOR_N;
+	}
+	else if(connection == CONNECTION_NE_EN)
+	{
+		return entry == TILE_SECTOR_N ? TILE_SECTOR_E : TILE_SECTOR_N;
+	}
+	else if(connection == CONNECTION_NW_WN)
+	{
+		return entry == TILE_SECTOR_N ? TILE_SECTOR_W : TILE_SECTOR_N;
+	}
+	else if(connection == CONNECTION_SW_WS)
+	{
+		return entry == TILE_SECTOR_S ? TILE_SECTOR_W : TILE_SECTOR_S;
+	}
+	else if(connection == CONNECTION_ES_SE)
+	{
+		return entry == TILE_SECTOR_S ? TILE_SECTOR_E : TILE_SECTOR_S;
+	}
+	else if(connection == CONNECTION_EW_WE)
+	{
+		return entry == TILE_SECTOR_E ? TILE_SECTOR_W : TILE_SECTOR_E;
+	}
+
+	// shouldn't happen
+	return TILE_SECTOR_S;
+}
+
+static TileSector TileSectorGetNextEntryByExit(TileSector exitSector)
+{
+	switch (exitSector)
+	{
+		case TILE_SECTOR_S:
+			return TILE_SECTOR_N;
+		case TILE_SECTOR_E:
+			return TILE_SECTOR_W;
+		case TILE_SECTOR_W:
+			return TILE_SECTOR_E;
+		case TILE_SECTOR_N:
+			return TILE_SECTOR_S;
+		default:
+			return TILE_SECTOR_CENTER;
+	}
+}
+
+static TileCoords TileGetNextFromExitSector(TileCoords tileCoords, TileSector exitSector)
+{
+	// todo check bounds
+	TileCoords newCoords = tileCoords;
+	switch (exitSector)
+	{
+		case TILE_SECTOR_S:
+			newCoords.z -= newCoords.z > 0 ? 1 : 0;
+			break;
+		case TILE_SECTOR_E:
+			newCoords.x -= newCoords.z > 0 ? 1 : 0;
+			break;
+		case TILE_SECTOR_W:
+			newCoords.x += newCoords.z < g_MapGridSize ? 1 : 0;
+			break;
+		case TILE_SECTOR_N:
+			newCoords.z += newCoords.z < g_MapGridSize ? 1 : 0;
+			break;
+		default: ; // pass
+	}
+
+	return newCoords;
+}
+
+static bool TileHasConnectionForEntry(TileCoords tileCoords, TileSector entrySector)
+{
+	int index = TileIndexByTileCoords(tileCoords.x, tileCoords.z);
+	TileInfo tile = g_game.mapTiles[index];
+	switch (entrySector)
+	{
+		case TILE_SECTOR_S:
+			return	TileHasConnectionFlag(tile.connectionOptions, CONNECTION_SW_WS) ||
+					TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN) ||
+					TileHasConnectionFlag(tile.connectionOptions, CONNECTION_ES_SE);
+		case TILE_SECTOR_E:
+			return	TileHasConnectionFlag(tile.connectionOptions, CONNECTION_ES_SE) ||
+					TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE) ||
+					TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NE_EN);
+			break;
+		case TILE_SECTOR_W:
+			return	TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE) ||
+					TileHasConnectionFlag(tile.connectionOptions, CONNECTION_SW_WS) ||
+					TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NW_WN);
+			break;
+		case TILE_SECTOR_N:
+			return	TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NS_SN) ||
+					TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NW_WN) ||
+					TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NE_EN);
+		default:
+			return false;
+	}
+}
+
+static void TileUpdateRailsModel(int x, int z)
+{
+	int tileIndex = TileIndexByTileCoords(x, z);
 	TileInfo tile = g_game.mapTiles[tileIndex];
 	int connectionCount = TileHConnectionsCount(tile.connectionOptions);
 	if(connectionCount == 1)
@@ -788,15 +1055,26 @@ void TileUpdateRailsModel(TileCoords coords)
 		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NW_WN))
 		{
 			tile.modelID = MODEL_RAILS_MERGE_MIRROR;
-			tile.modelRotationInDegree = 270;
+			tile.modelRotationInDegree = 90;
 		}
 		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_NE_EN))
 		{
-			tile.modelID = MODEL_RAILS_MERGE_MIRROR;
+			tile.modelID = MODEL_RAILS_MERGE;
 			tile.modelRotationInDegree = 90;
+		}
+		else if(TileHasConnectionFlag(tile.connectionOptions, CONNECTION_EW_WE) && TileHasConnectionFlag(tile.connectionOptions, CONNECTION_ES_SE))
+		{
+			tile.modelID = MODEL_RAILS_MERGE_MIRROR;
+			tile.modelRotationInDegree = 270;
 		}
 	}
 	g_game.mapTiles[tileIndex] = tile;
+}
+
+inline static void TileAddConnectionAndUpdateRailsModel(int x, int z, ConnectionDirection direction)
+{
+	TileAddRailConnection(x, z, direction);
+	TileUpdateRailsModel(x, z);
 }
 
 void SectorTrailBakeConnection()
@@ -828,7 +1106,6 @@ void SectorTrailBakeConnection()
 		)
 		{
 			TileAddRailConnection(tileCoord.x, tileCoord.z, CONNECTION_NS_SN);
-
 		}
 		else if
 		(
@@ -879,7 +1156,7 @@ void SectorTrailBakeConnection()
 		}
 		// todo ----------------- ----------------- ----------------- ----------------- ----------------- -----------------
 	}
-	TileUpdateRailsModel(tileCoord);
+	TileUpdateRailsModel(tileCoord.x, tileCoord.z);
 }
 
 void SectorTrailPaintAt(TileCoords coords, TileSector sector)
@@ -946,19 +1223,26 @@ void RenderDebugWindow()
 
 	if(g_debugWindowOn)
 	{
+		// sim pause button
+		if(GuiButton((Rectangle) {15, (float) g_ScreenHeight - 65, 80, 50}, "Pause Sim"))
+		{
+			g_debugSimPauseOn = !g_debugSimPauseOn;
+		}
+
+		// debug panel
 		float lineHeight = 20;
-		Rectangle rect = (Rectangle) {16, 80, 180, 400};
+		Rectangle rect = (Rectangle) {16, 80, 180, 500};
 		GuiDrawRectangle(rect, 2, COLOR_BLACK, COLOR_GREY);
 		RayCollision rayCollision = MapMouseRaycast();
 		rect.x += 10;
+		char textBuffer[64];
+		rect.y = -100; // ????
 		if(rayCollision.hit)
 		{
 			TileCoords tileCoords = TileGetCoordsFromWorldPoint(rayCollision.point);
 			int tileIndex = TileIndexByTileCoords(tileCoords.x, tileCoords.z);
 			TileInfo tile = g_game.mapTiles[tileIndex];
 
-			char textBuffer[64];
-			rect.y = 0;
 			sprintf(textBuffer, "TileCoords: x=%d, z=%d", tileCoords.x, tileCoords.z);
 			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
 
@@ -974,6 +1258,11 @@ void RenderDebugWindow()
 			int connectionCount = TileHConnectionsCount(tile.connectionOptions);
 			rect.y += lineHeight;
 			sprintf(textBuffer, "Connection Count: %d", connectionCount);
+			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+			int activeConnectionCount = TileHConnectionsCount(tile.connectionsActive);
+			rect.y += lineHeight;
+			sprintf(textBuffer, "Connections Active Count: %d", activeConnectionCount);
 			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
 
 			rect.y += lineHeight;
@@ -1014,7 +1303,87 @@ void RenderDebugWindow()
 			sprintf(textBuffer, "Connection ES_SE: %s", connection_ES ? "True" : "False");
 			GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
 		}
+
+		rect.y += lineHeight;
+		GuiDrawText("-----------------------------", rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+		TrainInfo train = g_game.trains[0];
+		rect.y += lineHeight;
+		sprintf(textBuffer, "Train Tile: x%d z%d", train.tileCurrent.x, train.tileCurrent.z);
+		GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+		rect.y += lineHeight;
+		sprintf(textBuffer, "Train To: %s", TileSectorToString(train.driveToSector));
+		GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+		rect.y += lineHeight;
+		sprintf(textBuffer, "Train From: %s", TileSectorToString(train.driveFromSector));
+		GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+		rect.y += lineHeight;
+		sprintf(textBuffer, "Train Connection: %s", ConnectionDirectionToString(train.tileConnectionUsed));
+		GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+		rect.y += lineHeight;
+		sprintf(textBuffer, "Train Next Tile: %d %d", train.tileNext.x, train.tileNext.z);
+		GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+		rect.y += lineHeight;
+		sprintf(textBuffer, "Train Next Tile: %d %d", train.tileNext.x, train.tileNext.z);
+		GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+		rect.y += lineHeight;
+		sprintf(textBuffer, "Train Rotation: %f", train.modelRotationInDegree);
+		GuiDrawText(textBuffer, rect, TEXT_ALIGN_LEFT, COLOR_BLACK);
+
+
 	}
+}
+
+
+Vector3 Bezier3D(Vector3 start, Vector3 middle, Vector3 end, float t)
+{
+	// Ensure t is clamped between 0 and 1
+	if (t < 0.0f) t = 0.0f;
+	if (t > 1.0f) t = 1.0f;
+
+	// Calculate tangents
+	Vector3 tangentStart = Vector3Add(start, Vector3Scale(Vector3Subtract(middle, start), 0.5f));
+	Vector3 tangentEnd = Vector3Add(end, Vector3Scale(Vector3Subtract(middle, end), 0.5f));
+
+	// Calculate Bezier coefficients
+	float u = 1.0f - t;
+	float tt = t * t;
+	float uu = u * u;
+	float uuu = uu * u;
+	float ttt = tt * t;
+
+	// Combine the weighted contributions of each control point
+	Vector3 p = Vector3Scale(start, uuu); // (1-t)^3 * start
+	p = Vector3Add(p, Vector3Scale(tangentStart, 3 * uu * t)); // 3(1-t)^2 * t * tangentStart
+	p = Vector3Add(p, Vector3Scale(tangentEnd, 3 * u * tt)); // 3(1-t) * t^2 * tangentEnd
+	p = Vector3Add(p, Vector3Scale(end, ttt)); // t^3 * end
+
+	return p;
+}
+
+float CalculateLookAtAngle(Vector3 from, Vector3 to)
+{
+	// Compute the direction vector from 'from' to 'to'
+	Vector3 direction = Vector3Subtract(to, from);
+
+	// Calculate the angle using atan2
+	// atan2(y, x) returns the angle in radians between the positive X-axis and the point (x, y)
+	// We use direction.x and direction.z since we are rotating around the Y-axis
+	float angle = atan2f(direction.x, direction.z) * RAD2DEG;
+
+	// Ensure the angle is within the range [0, 360)
+	if (angle < 0.0f)
+	{
+		angle += 360.0f;
+	}
+
+	return angle;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -1045,13 +1414,219 @@ void TickToolbarUI(void)
 	}
 }
 
+
+static void TickTrains(void)
+{
+	if(g_debugSimPauseOn)
+	{
+		return;
+	}
+
+	for(int i = 0; i < g_MaxTrains; ++i)
+	{
+		if(g_game.trains[i].state != TRAIN_STATE_DISABLED)
+		{
+			if(g_game.trains[i].state == TRAIN_STATE_DRIVING)
+			{
+				float deltaTime = GetFrameTime(); // seconds?
+				g_game.trains[i].pathProgressNormalized += g_game.trains[i].speedDrive * deltaTime;
+
+				if(g_game.trains[i].pathProgressNormalized >= 1.0f)
+				{
+					TileCoords tileCoords = g_game.trains[i].tileNext;
+					int tileIndex = TileIndexByTileCoords(tileCoords.x, tileCoords.z);
+
+					TileSector entrySectorNeeded = TileSectorGetNextEntryByExit(g_game.trains[i].driveToSector);
+					bool hasConnectionToEntry = TileHasConnectionForEntry(tileCoords, entrySectorNeeded);
+
+					// check next tile if it has rails
+					if(g_game.mapTiles[tileIndex].type == TILE_TYPE_EMPTY)
+					{
+						g_game.trains[i].state = TRAIN_STATE_BLOCKED;
+					}
+					else if(hasConnectionToEntry == false)
+					{
+						g_game.trains[i].state = TRAIN_STATE_BLOCKED;
+					}
+					else
+					{
+						// let's drive the train onto it ...
+						// finished the path on the current tile, needs overflow into next tile including updating everything
+						float progressNormalized = fmodf(g_game.trains[i].pathProgressNormalized, 1.0f);
+						TileCoords previousTileCoords = g_game.trains[i].tileCurrent;
+						TileCoords currentTileCoords =  g_game.trains[i].tileNext;
+
+						TileSector entrySector = TileSectorGetNextEntryByExit(g_game.trains[i].driveToSector);
+
+						ConnectionDirection activeConnection;
+						int activeConnectionCount = TileHConnectionsCount(g_game.mapTiles[tileIndex].connectionsActive);
+						if(activeConnectionCount == 1)
+						{
+							activeConnection = g_game.mapTiles[tileIndex].connectionsActive;
+						}
+						else
+						{
+							// find which one is serving the entry point needed
+							// hardcoded for now for the rail crosssection
+							if(entrySector == TILE_SECTOR_N || entrySector == TILE_SECTOR_S)
+							{
+								activeConnection = CONNECTION_NS_SN;
+							}
+							else
+							{
+								activeConnection = CONNECTION_EW_WE;
+							}
+						}
+
+						// while next tile has rails, let's check if it has a fitting entry point where we want to enter
+						TileSector exitSector = TileSectorGetExitFromEntryAndConnectionDirection(activeConnection, entrySector);
+						TileCoords nextTile = TileGetNextFromExitSector(tileCoords, exitSector);
+
+						// update train to next tile
+						g_game.trains[i].pathProgressNormalized = progressNormalized;
+						g_game.trains[i].tilePrevious = previousTileCoords;
+						g_game.trains[i].tileCurrent = currentTileCoords;
+
+						g_game.trains[i].tileNext = nextTile;
+						g_game.trains[i].driveFromSector = entrySector;
+						g_game.trains[i].driveToSector = exitSector;
+						g_game.trains[i].tileConnectionUsed = activeConnection;
+					}
+				}
+
+				if(g_game.trains[i].state == TRAIN_STATE_DRIVING)
+				{
+					// cure progress increase by delta time and train speed
+					Vector3 startPosition = TileSectorGetEdgePosition(g_game.trains[i].tileCurrent, g_game.trains[i].driveFromSector);
+					Vector3 endPosition = TileSectorGetEdgePosition(g_game.trains[i].tileCurrent, g_game.trains[i].driveToSector);
+					Vector3 middlePosition = TileGetCenterPosition(g_game.trains[i].tileCurrent);
+					g_game.trains[i].modelPosition = Bezier3D(startPosition, middlePosition, endPosition, g_game.trains[i].pathProgressNormalized);
+
+					// curve alignment by look at a point ahead of the curve
+					Vector3 lookAheadPosition = Bezier3D(startPosition, middlePosition, endPosition, g_game.trains[i].pathProgressNormalized + 0.1f);
+					g_game.trains[i].modelRotationInDegree = CalculateLookAtAngle(g_game.trains[i].modelPosition, lookAheadPosition);
+				}
+			}
+			else if(g_game.trains[i].state == TRAIN_STATE_BLOCKED)
+			{
+				TileCoords tileCoords = g_game.trains[i].tileNext;
+				int tileIndex = TileIndexByTileCoords(tileCoords.x, tileCoords.z);
+				if(g_game.mapTiles[tileIndex].type == TILE_TYPE_RAILS)
+				{
+					g_game.trains[i].state = TRAIN_STATE_DRIVING;
+				}
+			}
+		}
+	}
+}
+
+void TickPaintRails(void)
+{
+	RayCollision rayCollision = MapMouseRaycast();
+	if(rayCollision.hit)
+	{
+		TileCoords tileCoords = TileGetCoordsFromWorldPoint(rayCollision.point);
+		Vector3 tileCenterPoint = TileGetCenterPosition(tileCoords);
+		TileSector sector = TileSectorGetFromWorldPoint(rayCollision.point);
+		Vector3 sectorCenterPoint = TileSectorGetCenterPosition(tileCoords, sector);
+
+		// draw grid cursor
+		DrawCube(tileCenterPoint, 1, 0.01f, 1, COLOR_BLUE);
+
+		// draw grid sector cursor
+		if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) == false && IsKeyDown(KEY_SPACE) == false && g_game.cameraPanState.panningState == CAM_PAN_IDLE)
+		{
+			//DrawCube(rayCollision.point, 1, 0.2f, 1, COLOR_YELLOW);
+			DrawCube(sectorCenterPoint, 0.33f, 0.1f, 0.33f, COLOR_WHITE);
+		}
+		else if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) ||IsKeyDown(KEY_SPACE) )
+		{
+
+			SectorTrailPaintAt(tileCoords, sector);
+			//TileAddRailConnection(tileCoords.x, tileCoords.z, TILE_TYPE_RAILS, true, false, true, false);
+		}
+		if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT) || IsKeyReleased(KEY_SPACE))
+		{
+			if(g_game.brushSectorTrailLength > 0)
+			{
+				SectorTrailBakeConnection();
+			}
+			g_game.brushSectorTrailLength = 0;
+		}
+	}
+
+	// draw tile sector based paint brush cursor
+	for(int tileSectorIndex = 0; tileSectorIndex < g_game.brushSectorTrailLength; tileSectorIndex++)
+	{
+		TileCoords coords = g_game.brushSectorTrail[tileSectorIndex].coords;
+		TileSector sector = g_game.brushSectorTrail[tileSectorIndex].sector;
+		Vector3 sectorCenterPoint = TileSectorGetCenterPosition(coords, sector);
+		DrawCube(sectorCenterPoint, 0.33f, 0.13f, 0.33f, COLOR_GREY);
+	}
+}
+
+void TickBulldozer(void)
+{
+	RayCollision rayCollision = MapMouseRaycast();
+	if(rayCollision.hit)
+	{
+		TileCoords tileCoords = TileGetCoordsFromWorldPoint(rayCollision.point);
+		Vector3 tileCenterPoint = TileGetCenterPosition(tileCoords);
+		int tileIndex = TileIndexByTileCoords(tileCoords.x, tileCoords.z);
+		if(g_game.mapTiles[tileIndex].type == TILE_TYPE_RAILS)
+		{
+			// can delete cursor
+
+			if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsKeyPressed(KEY_SPACE))
+			{
+				bool veto = false;
+				// any train on that tile?
+				for(int trainIndex = 0; trainIndex < g_MaxTrains; ++trainIndex)
+				{
+					if(g_game.trains[trainIndex].state == TRAIN_STATE_DRIVING)
+					{
+						int trainX = g_game.trains[trainIndex].tileCurrent.x;
+						int trainZ = g_game.trains[trainIndex].tileCurrent.z;
+
+						if(tileCoords.x != trainX && tileCoords.z == trainZ)
+						{
+							veto = true;
+							DrawCube(tileCenterPoint, 1, 0.01f, 1, COLOR_RED);
+							break;
+						}
+					}
+				}
+
+				if(veto == false)
+				{
+					g_game.mapTiles[tileIndex].type = TILE_TYPE_EMPTY;
+					g_game.mapTiles[tileIndex].connectionOptions = 0; // none
+					g_game.mapTiles[tileIndex].connectionsActive = 0;
+					g_game.mapTiles[tileIndex].modelRotationInDegree = 0;
+					DrawCube(tileCenterPoint, 1, 0.01f, 1, COLOR_GREEN);
+				}
+			}
+			else
+			{
+				DrawCube(tileCenterPoint, 1, 0.01f, 1, COLOR_YELLOW);
+			}
+		}
+		else
+		{
+			// can't do anything - neutral cursor
+			DrawCube(tileCenterPoint, 1, 0.01f, 1, COLOR_GREY);
+		}
+	}
+}
+
 // Update and draw frame
 void TickMainLoop(void)
 {
 	//----------------------------------------------------------------------------------
     // Update
 	//----------------------------------------------------------------------------------
-	CameraTick();
+	TickCamera();
+	TickTrains();
 
 	//----------------------------------------------------------------------------------
     // Draw
@@ -1067,50 +1642,22 @@ void TickMainLoop(void)
 			DrawPlane((Vector3){ center, 0.0f, center }, (Vector2){ width, width }, COLOR_GREEN); // ground plane
 			DrawGridAt(g_MapGridSize, 1.0f, center, 0.01f, center, COLOR_BLACK, COLOR_RED);
 
-			// debug markers
-			DrawSphere((Vector3){ 0.0f, 0.0f, 0.0f }, 0.1f, COLOR_RED); // map origin
-			DrawSphere((Vector3){ 0.5f, 0.0f, 0.0f }, 0.1f, COLOR_RED); // map origin
-			DrawSphere((Vector3){ 1.0f, 0.0f, 0.0f }, 0.1f, COLOR_RED); // map origin
-			DrawSphere((Vector3){width, 0, width}, 0.1f, COLOR_YELLOW); // map far end
-			DrawSphere((Vector3){width, 0, width - 0.5f}, 0.1f, COLOR_YELLOW); // map far end
-			DrawSphere((Vector3){width, 0, width - 1.0f}, 0.1f, COLOR_YELLOW); // map far end
 
-			RayCollision rayCollision = MapMouseRaycast();
-			if(rayCollision.hit)
+			if(g_game.actionMode == ACTION_MODE_BUILD_RAILS)
 			{
-				TileCoords tileCoords = TileGetCoordsFromWorldPoint(rayCollision.point);
-				Vector3 tileCenterPoint = TileGetCenterPosition(tileCoords);
-				TileSector sector = TileSectorGetFromWorldPoint(rayCollision.point);
-				Vector3 sectorCenterPoint = TileSectorGetCenterPosition(tileCoords, sector);
-
-				// draw grid cursor
-				DrawCube(tileCenterPoint, 1, 0.01f, 1, COLOR_BLUE);
-
-				// draw grid sector cursor
-				if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) == false && IsKeyDown(KEY_SPACE) == false && g_game.cameraPanState.panningState == CAM_PAN_IDLE)
-				{
-					//DrawCube(rayCollision.point, 1, 0.2f, 1, COLOR_YELLOW);
-					DrawCube(sectorCenterPoint, 0.33f, 0.1f, 0.33f, COLOR_WHITE);
-				}
-				else if(IsMouseButtonDown(MOUSE_BUTTON_LEFT) ||IsKeyDown(KEY_SPACE) )
-				{
-
-					SectorTrailPaintAt(tileCoords, sector);
-					//TileAddRailConnection(tileCoords.x, tileCoords.z, TILE_TYPE_RAILS, true, false, true, false);
-				}
-				if(IsMouseButtonReleased(MOUSE_BUTTON_LEFT) || IsKeyReleased(KEY_SPACE))
-				{
-					// todo analyse trail
-					// todo register change
-					if(g_game.brushSectorTrailLength > 0)
-					{
-						SectorTrailBakeConnection();
-					}
-					g_game.brushSectorTrailLength = 0;
-				}
+				TickPaintRails();
 			}
+			else if(g_game.actionMode == ACTION_MODE_BUILD_BULLDOZER)
+			{
+				TickBulldozer();
+			}
+			// todo signals
+			// todo economy
 
-			// draw models on tiles
+			const Vector3 vectorUp = (Vector3) {0,1,0};
+
+			////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			// draw rails on tiles
 			for(int tileIndex = 0; tileIndex < g_TileCount; ++tileIndex)
 			{
 				TileInfo tile = g_game.mapTiles[tileIndex];
@@ -1118,21 +1665,24 @@ void TickMainLoop(void)
 				{
 					TileCoords tileCoords = TileCoordsByIndex(tileIndex);
 					Vector3 tileCenter = TileGetCenterPosition(tileCoords);
-					DrawModelEx(g_game.assetModels[tile.modelID], tileCenter, (Vector3) {0,1,0}, tile.modelRotationInDegree, Vector3One(), COLOR_WHITE);
+					DrawModelEx(g_game.assetModels[tile.modelID], tileCenter, vectorUp, tile.modelRotationInDegree, Vector3One(), COLOR_WHITE);
 				}
 			}
 
-			// draw tile sector based paint brush cursor
-			for(int tileSectorIndex = 0; tileSectorIndex < g_game.brushSectorTrailLength; tileSectorIndex++)
+			////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			// draw trains
+			for(int i = 0; i < g_MaxTrains; ++i)
 			{
-				TileCoords coords = g_game.brushSectorTrail[tileSectorIndex].coords;
-				TileSector sector = g_game.brushSectorTrail[tileSectorIndex].sector;
-				Vector3 sectorCenterPoint = TileSectorGetCenterPosition(coords, sector);
-				DrawCube(sectorCenterPoint, 0.33f, 0.13f, 0.33f, COLOR_GREY);
+				if(g_game.trains[i].state != TRAIN_STATE_DISABLED && g_game.trains[i].state != TRAIN_STATE_HIDDEN)
+				{
+					TrainInfo train = g_game.trains[i];
+					DrawModelEx(g_game.assetModels[train.modelID], train.modelPosition, vectorUp, train.modelRotationInDegree, Vector3One(), WHITE);
+				}
 			}
 
 		EndMode3D();
 
+		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // UI
 		int frameThickness = 16;
 		DrawRectangle(0,frameThickness, g_ScreenWidth, 30, BLACK); // background
@@ -1142,7 +1692,6 @@ void TickMainLoop(void)
 		TickToolbarUI();
 		RenderDebugWindow();
 		DrawFPS(20, 20);
-
 
     EndDrawing();
     //----------------------------------------------------------------------------------  
